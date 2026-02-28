@@ -388,6 +388,9 @@ pub struct ProvidersConfig {
     pub anthropic_oauth: Option<AnthropicOAuthConfig>,
 
     #[serde(default)]
+    pub gemini: Option<GeminiConfig>,
+
+    #[serde(default)]
     pub gemini_oauth: Option<GeminiOAuthConfig>,
 
     #[serde(default)]
@@ -503,6 +506,14 @@ pub struct GlmConfig {
     pub api_key: String,
 
     #[serde(default = "default_glm_base_url")]
+    pub base_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiConfig {
+    pub api_key: String,
+
+    #[serde(default = "default_gemini_base_url")]
     pub base_url: String,
 }
 
@@ -1182,6 +1193,9 @@ impl Config {
             if let Some(ref mut client_secret) = anthropic_oauth.client_secret {
                 *client_secret = expand_env(client_secret);
             }
+        }
+        if let Some(ref mut gemini) = self.providers.gemini {
+            gemini.api_key = expand_env(&gemini.api_key);
         }
         if let Some(ref mut gemini_oauth) = self.providers.gemini_oauth {
             gemini_oauth.access_token = expand_env(&gemini_oauth.access_token);

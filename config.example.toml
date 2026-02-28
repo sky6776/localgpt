@@ -141,6 +141,12 @@ base_url = "https://api.anthropic.com"
 # refresh_token = "${ANTHROPIC_OAUTH_REFRESH_TOKEN}"  # Optional, for token renewal
 # base_url = "https://api.anthropic.com"
 
+# Gemini API key configuration (simplest way to use Gemini)
+# Get your API key at: https://aistudio.google.com/app/apikey
+# [providers.gemini]
+# api_key = "${GEMINI_API_KEY}"
+# base_url = "https://generativelanguage.googleapis.com"
+
 # Gemini OAuth configuration (for Google AI subscription plans)
 # Use this for Google Gemini subscription authentication with OAuth 2.0
 # To obtain OAuth tokens:

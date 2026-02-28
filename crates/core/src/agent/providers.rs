@@ -480,30 +480,38 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
         }
 
         "gemini" => {
-            let gemini_config = config.providers.gemini_oauth.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Gemini OAuth provider not configured.\n\
-                    Add to {}/config.toml:\n\n\
+            // Prefer OAuth config if available
+            if let Some(gemini_config) = &config.providers.gemini_oauth {
+                Ok(Box::new(GeminiOAuthProvider::new(
+                    OAuthConfig {
+                        access_token: gemini_config.access_token.clone(),
+                        refresh_token: gemini_config.refresh_token.clone(),
+                        client_id: gemini_config.client_id.clone(),
+                        client_secret: gemini_config.client_secret.clone(),
+                        expires_at: gemini_config.expires_at,
+                        base_url: gemini_config.base_url.clone(),
+                    },
+                    &model_id,
+                    gemini_config.project_id.as_deref(),
+                )?))
+            } else if let Some(gemini_config) = &config.providers.gemini {
+                Ok(Box::new(GeminiApiKeyProvider::new(
+                    &gemini_config.api_key,
+                    &gemini_config.base_url,
+                    &model_id,
+                )?))
+            } else {
+                anyhow::bail!(
+                    "Gemini provider not configured.\n\
+                    Set GEMINI_API_KEY env var and add to {}/config.toml:\n\n\
+                    [providers.gemini]\n\
+                    api_key = \"${{GEMINI_API_KEY}}\"\n\n\
+                    Or use OAuth:\n\n\
                     [providers.gemini_oauth]\n\
-                    access_token = \"${{GEMINI_OAUTH_TOKEN}}\"\n\
-                    # Optional: refresh_token for automatic token renewal\n\
-                    # Optional: project_id for enterprise/subscription plans",
+                    access_token = \"${{GEMINI_OAUTH_TOKEN}}\"",
                     DEFAULT_CONFIG_DIR_STR
                 )
-            })?;
-
-            Ok(Box::new(GeminiOAuthProvider::new(
-                OAuthConfig {
-                    access_token: gemini_config.access_token.clone(),
-                    refresh_token: gemini_config.refresh_token.clone(),
-                    client_id: gemini_config.client_id.clone(),
-                    client_secret: gemini_config.client_secret.clone(),
-                    expires_at: gemini_config.expires_at,
-                    base_url: gemini_config.base_url.clone(),
-                },
-                &model_id,
-                gemini_config.project_id.as_deref(),
-            )?))
+            }
         }
 
         "github" => {
@@ -3788,6 +3796,271 @@ impl LLMProvider for AnthropicOAuthProvider {
     }
 }
 
+// Shared Gemini formatting helpers (used by both API key and OAuth providers)
+
+fn gemini_format_messages(messages: &[Message]) -> Vec<Value> {
+    let mut formatted = Vec::new();
+    let mut system_instruction = None;
+
+    for m in messages {
+        match m.role {
+            Role::System => {
+                system_instruction = Some(m.content.clone());
+            }
+            Role::User => {
+                let mut parts = Vec::new();
+                if !m.content.is_empty() {
+                    parts.push(json!({"text": m.content}));
+                }
+                for img in &m.images {
+                    parts.push(json!({
+                        "inline_data": {
+                            "mime_type": img.media_type,
+                            "data": img.data
+                        }
+                    }));
+                }
+                formatted.push(json!({
+                    "role": "user",
+                    "parts": parts
+                }));
+            }
+            Role::Assistant => {
+                if let Some(ref tool_calls) = m.tool_calls {
+                    let function_calls: Vec<Value> = tool_calls
+                        .iter()
+                        .map(|tc| {
+                            json!({
+                                "function_call": {
+                                    "name": tc.name,
+                                    "args": serde_json::from_str::<Value>(&tc.arguments)
+                                        .unwrap_or(json!({}))
+                                }
+                            })
+                        })
+                        .collect();
+                    formatted.push(json!({
+                        "role": "model",
+                        "parts": function_calls
+                    }));
+                } else {
+                    formatted.push(json!({
+                        "role": "model",
+                        "parts": [{"text": m.content}]
+                    }));
+                }
+            }
+            Role::Tool => {
+                if let Some(ref tool_call_id) = m.tool_call_id {
+                    formatted.push(json!({
+                        "role": "function",
+                        "parts": [{
+                            "function_response": {
+                                "name": tool_call_id,
+                                "response": {"result": m.content}
+                            }
+                        }]
+                    }));
+                }
+            }
+        }
+    }
+
+    // Prepend system instruction if present
+    if let Some(system) = system_instruction {
+        formatted.insert(
+            0,
+            json!({
+                "role": "user",
+                "parts": [{"text": system}]
+            }),
+        );
+    }
+
+    formatted
+}
+
+fn gemini_format_tools(tools: &[ToolSchema]) -> Vec<Value> {
+    tools
+        .iter()
+        .map(|t| {
+            json!({
+                "function_declarations": [{
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters
+                }]
+            })
+        })
+        .collect()
+}
+
+fn gemini_parse_response(response_body: &Value) -> Result<LLMResponse> {
+    let candidates = response_body["candidates"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("No candidates in response"))?;
+
+    if candidates.is_empty() {
+        anyhow::bail!("Empty candidates in response");
+    }
+
+    let parts = candidates[0]["content"]["parts"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("No parts in candidate"))?;
+
+    // Check for function calls (tool use)
+    let tool_calls: Vec<ToolCall> = parts
+        .iter()
+        .filter_map(|p| p.get("function_call"))
+        .enumerate()
+        .map(|(i, fc)| ToolCall {
+            id: format!("call_{}", i),
+            name: fc["name"].as_str().unwrap_or("").to_string(),
+            arguments: serde_json::to_string(&fc["args"]).unwrap_or("{}".to_string()),
+        })
+        .collect();
+
+    if !tool_calls.is_empty() {
+        let text = {
+            let t = parts
+                .iter()
+                .filter_map(|p| p.get("text"))
+                .filter_map(|t| t.as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            if t.is_empty() { None } else { Some(t) }
+        };
+        return Ok(LLMResponse {
+            content: LLMResponseContent::ToolCalls {
+                calls: tool_calls,
+                text,
+            },
+            usage: None,
+        });
+    }
+
+    // Get text content
+    let text = parts
+        .iter()
+        .filter_map(|p| p.get("text"))
+        .filter_map(|t| t.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+
+    Ok(LLMResponse {
+        content: LLMResponseContent::Text(text),
+        usage: None,
+    })
+}
+
+// Gemini API Key Provider (for Google AI Studio API keys)
+pub struct GeminiApiKeyProvider {
+    client: Client,
+    api_key: String,
+    base_url: String,
+    model: String,
+}
+
+impl GeminiApiKeyProvider {
+    pub fn new(api_key: &str, base_url: &str, model: &str) -> Result<Self> {
+        let client = Client::builder()
+            .http1_only()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()?;
+
+        Ok(Self {
+            client,
+            api_key: api_key.to_string(),
+            base_url: base_url.to_string(),
+            model: model.to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl LLMProvider for GeminiApiKeyProvider {
+    fn name(&self) -> String {
+        "gemini".to_string()
+    }
+
+    async fn chat(
+        &self,
+        messages: &[Message],
+        tools: Option<&[ToolSchema]>,
+    ) -> Result<LLMResponse> {
+        let formatted_messages = gemini_format_messages(messages);
+
+        let mut body = json!({
+            "contents": formatted_messages,
+        });
+
+        if let Some(tool_schemas) = tools
+            && !tool_schemas.is_empty()
+        {
+            body["tools"] = json!(gemini_format_tools(tool_schemas));
+        }
+
+        debug!(
+            "Gemini API key request: {}",
+            serde_json::to_string_pretty(&body)?
+        );
+
+        let url = format!(
+            "{}/v1beta/models/{}:generateContent",
+            self.base_url, self.model
+        );
+
+        let response = self
+            .client
+            .post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let response_text = response.text().await?;
+        debug!("Gemini API key response ({}): {}", status, response_text);
+
+        let response_body: Value = match serde_json::from_str(&response_text) {
+            Ok(val) => val,
+            Err(e) => {
+                anyhow::bail!(
+                    "Failed to decode Gemini response body (Status: {}): {}\n\nRaw response:\n{}",
+                    status,
+                    e,
+                    response_text
+                );
+            }
+        };
+
+        if let Some(error) = response_body.get("error") {
+            anyhow::bail!("Gemini API error: {}", error);
+        }
+
+        gemini_parse_response(&response_body)
+    }
+
+    async fn summarize(&self, text: &str) -> Result<String> {
+        let messages = vec![Message {
+            role: Role::User,
+            content: format!(
+                "Summarize the following conversation concisely, preserving key information and context:\n\n{}",
+                text
+            ),
+            tool_calls: None,
+            tool_call_id: None,
+            images: Vec::new(),
+        }];
+
+        match self.chat(&messages, None).await?.content {
+            LLMResponseContent::Text(summary) => Ok(summary),
+            _ => anyhow::bail!("Unexpected response type"),
+        }
+    }
+}
+
 // Gemini OAuth Provider (for Google AI subscription plans)
 pub struct GeminiOAuthProvider {
     client: Client,
@@ -3910,103 +4183,6 @@ impl GeminiOAuthProvider {
 
         Ok(())
     }
-
-    fn format_messages(&self, messages: &[Message]) -> Vec<Value> {
-        let mut formatted = Vec::new();
-        let mut system_instruction = None;
-
-        for m in messages {
-            match m.role {
-                Role::System => {
-                    system_instruction = Some(m.content.clone());
-                }
-                Role::User => {
-                    let mut parts = Vec::new();
-                    if !m.content.is_empty() {
-                        parts.push(json!({"text": m.content}));
-                    }
-                    for img in &m.images {
-                        parts.push(json!({
-                            "inline_data": {
-                                "mime_type": img.media_type,
-                                "data": img.data
-                            }
-                        }));
-                    }
-                    formatted.push(json!({
-                        "role": "user",
-                        "parts": parts
-                    }));
-                }
-                Role::Assistant => {
-                    if let Some(ref tool_calls) = m.tool_calls {
-                        let function_calls: Vec<Value> = tool_calls
-                            .iter()
-                            .map(|tc| {
-                                json!({
-                                    "function_call": {
-                                        "name": tc.name,
-                                        "args": serde_json::from_str::<Value>(&tc.arguments)
-                                            .unwrap_or(json!({}))
-                                    }
-                                })
-                            })
-                            .collect();
-                        formatted.push(json!({
-                            "role": "model",
-                            "parts": function_calls
-                        }));
-                    } else {
-                        formatted.push(json!({
-                            "role": "model",
-                            "parts": [{"text": m.content}]
-                        }));
-                    }
-                }
-                Role::Tool => {
-                    if let Some(ref tool_call_id) = m.tool_call_id {
-                        formatted.push(json!({
-                            "role": "function",
-                            "parts": [{
-                                "function_response": {
-                                    "name": tool_call_id,
-                                    "response": {"result": m.content}
-                                }
-                            }]
-                        }));
-                    }
-                }
-            }
-        }
-
-        // Prepend system instruction if present
-        if let Some(system) = system_instruction {
-            formatted.insert(
-                0,
-                json!({
-                    "role": "user",
-                    "parts": [{"text": system}]
-                }),
-            );
-        }
-
-        formatted
-    }
-
-    fn format_tools(&self, tools: &[ToolSchema]) -> Vec<Value> {
-        tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "function_declarations": [{
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }]
-                })
-            })
-            .collect()
-    }
 }
 
 #[async_trait]
@@ -4033,7 +4209,7 @@ impl LLMProvider for GeminiOAuthProvider {
     ) -> Result<LLMResponse> {
         self.ensure_valid_token().await?;
 
-        let formatted_messages = self.format_messages(messages);
+        let formatted_messages = gemini_format_messages(messages);
 
         let mut body = json!({
             "contents": formatted_messages,
@@ -4042,7 +4218,7 @@ impl LLMProvider for GeminiOAuthProvider {
         if let Some(tool_schemas) = tools
             && !tool_schemas.is_empty()
         {
-            body["tools"] = json!(self.format_tools(tool_schemas));
+            body["tools"] = json!(gemini_format_tools(tool_schemas));
         }
 
         debug!(
@@ -4124,61 +4300,7 @@ impl LLMProvider for GeminiOAuthProvider {
             anyhow::bail!("Gemini OAuth API error: {}", error);
         }
 
-        let candidates = response_body["candidates"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("No candidates in response"))?;
-
-        if candidates.is_empty() {
-            anyhow::bail!("Empty candidates in response");
-        }
-
-        let parts = candidates[0]["content"]["parts"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("No parts in candidate"))?;
-
-        // Check for function calls (tool use)
-        let tool_calls: Vec<ToolCall> = parts
-            .iter()
-            .filter_map(|p| p.get("function_call"))
-            .enumerate()
-            .map(|(i, fc)| ToolCall {
-                id: format!("call_{}", i),
-                name: fc["name"].as_str().unwrap_or("").to_string(),
-                arguments: serde_json::to_string(&fc["args"]).unwrap_or("{}".to_string()),
-            })
-            .collect();
-
-        if !tool_calls.is_empty() {
-            let text = {
-                let t = parts
-                    .iter()
-                    .filter_map(|p| p.get("text"))
-                    .filter_map(|t| t.as_str())
-                    .collect::<Vec<_>>()
-                    .join("");
-                if t.is_empty() { None } else { Some(t) }
-            };
-            return Ok(LLMResponse {
-                content: LLMResponseContent::ToolCalls {
-                    calls: tool_calls,
-                    text,
-                },
-                usage: None,
-            });
-        }
-
-        // Get text content
-        let text = parts
-            .iter()
-            .filter_map(|p| p.get("text"))
-            .filter_map(|t| t.as_str())
-            .collect::<Vec<_>>()
-            .join("");
-
-        Ok(LLMResponse {
-            content: LLMResponseContent::Text(text),
-            usage: None,
-        })
+        gemini_parse_response(&response_body)
     }
 
     async fn summarize(&self, text: &str) -> Result<String> {
