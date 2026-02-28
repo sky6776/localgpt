@@ -518,6 +518,8 @@ pub struct EntityInfoData {
     pub visible: bool,
     pub children: Vec<String>,
     pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behaviors: Vec<BehaviorSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

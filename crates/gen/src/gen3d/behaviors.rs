@@ -299,11 +299,7 @@ pub fn handle_list_behaviors(
         let summaries: Vec<BehaviorSummary> = behaviors
             .behaviors
             .iter()
-            .map(|b| BehaviorSummary {
-                id: b.id.clone(),
-                behavior_type: behavior_type_name(&b.def),
-                description: behavior_description(&b.def),
-            })
+            .map(behavior_to_summary)
             .collect();
 
         entities_summary.push(EntityBehaviorsSummary {
@@ -316,6 +312,15 @@ pub fn handle_list_behaviors(
         paused: state.paused,
         entities: entities_summary,
     })
+}
+
+/// Convert a BehaviorInstance to a BehaviorSummary for reporting.
+pub fn behavior_to_summary(instance: &BehaviorInstance) -> BehaviorSummary {
+    BehaviorSummary {
+        id: instance.id.clone(),
+        behavior_type: behavior_type_name(&instance.def),
+        description: behavior_description(&instance.def),
+    }
 }
 
 fn behavior_type_name(def: &BehaviorDef) -> String {

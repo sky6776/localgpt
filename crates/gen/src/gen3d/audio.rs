@@ -51,6 +51,8 @@ pub struct AudioEngine {
     graph_tx: mpsc::Sender<AudioGraphUpdate>,
     pub ambience_layer_names: Vec<String>,
     pub emitter_meta: HashMap<String, EmitterMeta>,
+    /// Last ambience command for world save round-trip.
+    pub last_ambience: Option<AmbienceCmd>,
 }
 
 struct EmitterSharedParams {
@@ -60,6 +62,7 @@ struct EmitterSharedParams {
 
 pub struct EmitterMeta {
     pub sound_type: String,
+    pub sound: EmitterSound,
     pub base_volume: f32,
     pub radius: f32,
     pub attached_to: Option<String>,
@@ -111,6 +114,7 @@ pub fn start_audio_engine() -> Option<AudioEngine> {
                 graph_tx,
                 ambience_layer_names: Vec::new(),
                 emitter_meta: HashMap::new(),
+                last_ambience: None,
             })
         }
         Err(e) => {
@@ -365,6 +369,7 @@ pub fn init_audio_engine(mut commands: Commands) {
                 graph_tx: tx,
                 ambience_layer_names: Vec::new(),
                 emitter_meta: HashMap::new(),
+                last_ambience: None,
             });
         }
     }
@@ -401,6 +406,7 @@ pub fn handle_set_ambience(cmd: AmbienceCmd, engine: &mut AudioEngine) -> GenRes
 
     engine.layer_volumes = layer_volumes;
     engine.ambience_layer_names = layer_names;
+    engine.last_ambience = Some(cmd.clone());
 
     let _ = engine.graph_tx.send(AudioGraphUpdate::SetAmbience {
         layers,
@@ -437,6 +443,7 @@ pub fn handle_spawn_audio_emitter(
         cmd.name.clone(),
         EmitterMeta {
             sound_type: emitter_sound_type_name(&cmd.sound),
+            sound: cmd.sound.clone(),
             base_volume: cmd.volume,
             radius: cmd.radius,
             attached_to: cmd.entity.clone(),
@@ -519,6 +526,7 @@ pub fn handle_modify_audio_emitter(
 
         if let Some(meta) = engine.emitter_meta.get_mut(&cmd.name) {
             meta.sound_type = emitter_sound_type_name(new_sound);
+            meta.sound = new_sound.clone();
         }
     }
 
@@ -651,6 +659,7 @@ pub fn auto_infer_audio(
             emitter_name.clone(),
             EmitterMeta {
                 sound_type: emitter_sound_type_name(&sound),
+                sound: sound.clone(),
                 base_volume,
                 radius,
                 attached_to: Some(name.as_str().to_string()),

@@ -39,6 +39,7 @@ pub fn create_gen_tools(bridge: Arc<GenBridge>) -> Vec<Box<dyn Tool>> {
         Box::new(GenAddBehaviorTool::new(bridge.clone())),
         Box::new(GenRemoveBehaviorTool::new(bridge.clone())),
         Box::new(GenListBehaviorsTool::new(bridge.clone())),
+        Box::new(GenPauseBehaviorsTool::new(bridge.clone())),
         // World tools
         Box::new(GenSaveWorldTool::new(bridge.clone())),
         Box::new(GenLoadWorldTool::new(bridge)),
@@ -1539,6 +1540,69 @@ impl Tool for GenListBehaviorsTool {
             .await?
         {
             GenResponse::BehaviorList(data) => Ok(serde_json::to_string_pretty(&data)?),
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_pause_behaviors
+// ===========================================================================
+
+struct GenPauseBehaviorsTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenPauseBehaviorsTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenPauseBehaviorsTool {
+    fn name(&self) -> &str {
+        "gen_pause_behaviors"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_pause_behaviors".into(),
+            description:
+                "Pause or resume all behaviors. When paused, entities freeze in place. Useful for inspecting or modifying the scene mid-animation."
+                    .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "paused": {
+                        "type": "boolean",
+                        "description": "true to pause, false to resume"
+                    }
+                },
+                "required": ["paused"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+        let paused = args["paused"]
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("Missing paused"))?;
+
+        match self
+            .bridge
+            .send(GenCommand::SetBehaviorsPaused { paused })
+            .await?
+        {
+            GenResponse::BehaviorsPaused { paused } => {
+                if paused {
+                    Ok("All behaviors paused".to_string())
+                } else {
+                    Ok("All behaviors resumed".to_string())
+                }
+            }
             GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
             other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
         }

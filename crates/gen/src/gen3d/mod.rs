@@ -9,6 +9,7 @@ pub mod audio;
 pub mod audio_graphs;
 pub mod behaviors;
 pub mod commands;
+pub mod gltf_export;
 pub mod plugin;
 pub mod registry;
 pub mod tools;
