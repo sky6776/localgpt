@@ -340,6 +340,26 @@ impl MemoryGetTool {
             PathBuf::from(shellexpand::tilde(path).to_string())
         }
     }
+
+    /// Validate that a resolved path stays within the workspace directory.
+    /// Checks the parent directory's canonical path if the file doesn't exist yet.
+    fn is_within_workspace(&self, resolved: &std::path::Path) -> bool {
+        let workspace_canonical = match self.workspace.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        // Try canonicalizing the file itself first
+        if let Ok(canonical) = resolved.canonicalize() {
+            return canonical.starts_with(&workspace_canonical);
+        }
+        // File doesn't exist — check the parent directory instead
+        if let Some(parent) = resolved.parent()
+            && let Ok(parent_canonical) = parent.canonicalize()
+        {
+            return parent_canonical.starts_with(&workspace_canonical);
+        }
+        false
+    }
 }
 
 #[async_trait]
@@ -379,10 +399,28 @@ impl Tool for MemoryGetTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
 
+        // Reject null bytes in raw input
+        if path.contains('\0') {
+            anyhow::bail!("Invalid path: null bytes not allowed");
+        }
+
         let from = args["from"].as_u64().unwrap_or(1).max(1) as usize;
-        let lines_count = args["lines"].as_u64().unwrap_or(50) as usize;
+        let lines_count = (args["lines"].as_u64().unwrap_or(50) as usize).min(10_000);
 
         let resolved_path = self.resolve_path(path);
+
+        // Check for path traversal on the resolved path (catches .. after tilde expansion)
+        if resolved_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            anyhow::bail!("Invalid path: path traversal not allowed");
+        }
+
+        // Verify resolved path stays within workspace
+        if !self.is_within_workspace(&resolved_path) {
+            anyhow::bail!("Access denied: path is outside workspace");
+        }
 
         debug!(
             "Memory get: {} (from: {}, lines: {})",
@@ -665,7 +703,37 @@ impl Tool for WebFetchTool {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let body = response.text().await?;
+
+        // Limit download size to prevent memory exhaustion from malicious servers.
+        // Allow up to 2x max_bytes raw download since extraction often shrinks content.
+        let download_limit = self.max_bytes * 2;
+
+        // Fast reject via Content-Length header when available
+        if let Some(content_length) = response.content_length()
+            && content_length as usize > download_limit
+        {
+            anyhow::bail!(
+                "Response too large ({} bytes, limit {})",
+                content_length,
+                download_limit
+            );
+        }
+
+        // Stream response body with size cap (handles chunked/missing Content-Length)
+        let mut body_bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        use futures::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            body_bytes.extend_from_slice(&chunk);
+            if body_bytes.len() > download_limit {
+                anyhow::bail!(
+                    "Response too large (>{} bytes), download aborted",
+                    download_limit
+                );
+            }
+        }
+        let body = String::from_utf8_lossy(&body_bytes).to_string();
         let extracted =
             if content_type.contains("text/html") || content_type.contains("application/xhtml") {
                 extract_readable_text(&body, &final_url)
@@ -793,5 +861,46 @@ mod tests {
         assert!(err.is_err());
         let msg = err.unwrap_err().to_string();
         assert!(msg.contains("Only http/https"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_get_rejects_path_traversal() {
+        let workspace = std::env::temp_dir().join("localgpt_test_workspace");
+        let _ = std::fs::create_dir_all(&workspace);
+        let tool = MemoryGetTool::new(workspace);
+
+        // Path with .. should be rejected
+        let args = r#"{"path": "memory/../../../etc/passwd"}"#;
+        let result = tool.execute(args).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("path traversal"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_get_rejects_null_bytes() {
+        let workspace = std::env::temp_dir().join("localgpt_test_workspace");
+        let _ = std::fs::create_dir_all(&workspace);
+        let tool = MemoryGetTool::new(workspace);
+
+        let args = r#"{"path": "memory/\u0000evil.md"}"#;
+        let result = tool.execute(args).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_memory_get_caps_lines_parameter() {
+        let workspace = std::env::temp_dir().join("localgpt_test_mg_lines");
+        let _ = std::fs::create_dir_all(workspace.join("memory"));
+        // Create a small test file
+        std::fs::write(workspace.join("MEMORY.md"), "line1\nline2\nline3\n").unwrap();
+        let tool = MemoryGetTool::new(workspace.clone());
+
+        // Even with a huge lines value, it should be capped and work normally
+        let args = r#"{"path": "MEMORY.md", "lines": 999999999}"#;
+        let result = tool.execute(args).await.unwrap();
+        assert!(result.contains("line1"));
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&workspace);
     }
 }
