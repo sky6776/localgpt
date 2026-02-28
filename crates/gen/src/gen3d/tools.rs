@@ -1380,11 +1380,11 @@ impl Tool for GenAddBehaviorTool {
                     },
                     "behavior": {
                         "type": "object",
-                        "description": "Behavior definition. Types: orbit {center: entity_name, center_point: [x,y,z], radius, speed (deg/s), axis: [x,y,z], phase (deg), tilt (deg)}, spin {axis: [x,y,z], speed (deg/s)}, bob {axis: [x,y,z], amplitude, frequency (Hz), phase (deg)}, look_at {target: entity_name}, pulse {min_scale, max_scale, frequency (Hz)}",
+                        "description": "Behavior definition. Types: orbit {center, center_point, radius, speed (deg/s), axis, phase, tilt}, spin {axis, speed}, bob {axis, amplitude, frequency, phase}, look_at {target}, pulse {min_scale, max_scale, frequency}, path_follow {waypoints: [[x,y,z],...], speed (u/s), mode: loop|ping_pong|once, orient_to_path}, bounce {height, gravity, damping, surface_y}",
                         "properties": {
                             "type": {
                                 "type": "string",
-                                "enum": ["orbit", "spin", "bob", "look_at", "pulse"]
+                                "enum": ["orbit", "spin", "bob", "look_at", "pulse", "path_follow", "bounce"]
                             }
                         },
                         "required": ["type"]
@@ -1702,13 +1702,18 @@ impl Tool for GenLoadWorldTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "gen_load_world".into(),
-            description: "Load a world skill. Restores the 3D scene, behaviors, audio, environment, and camera from a saved world directory.".into(),
+            description: "Load a world skill. Restores the 3D scene, behaviors, audio, environment, and camera from a saved world directory. Clears existing scene by default.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Path to world skill directory, or just the skill name (searches {workspace}/skills/)"
+                    },
+                    "clear": {
+                        "type": "boolean",
+                        "description": "Clear existing scene before loading (default: true)",
+                        "default": true
                     }
                 },
                 "required": ["path"]
@@ -1722,8 +1727,9 @@ impl Tool for GenLoadWorldTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?
             .to_string();
+        let clear = args["clear"].as_bool().unwrap_or(true);
 
-        match self.bridge.send(GenCommand::LoadWorld { path }).await? {
+        match self.bridge.send(GenCommand::LoadWorld { path, clear }).await? {
             GenResponse::WorldLoaded {
                 path,
                 entities,

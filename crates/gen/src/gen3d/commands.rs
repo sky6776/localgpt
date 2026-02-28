@@ -75,6 +75,8 @@ pub enum GenCommand {
     SaveWorld(SaveWorldCmd),
     LoadWorld {
         path: String,
+        /// Clear existing scene before loading (default: true).
+        clear: bool,
     },
 
     // Tier 8: Scene management
@@ -373,6 +375,35 @@ pub enum BehaviorDef {
         #[serde(default = "default_bob_frequency")]
         frequency: f32,
     },
+    /// Follow a path of waypoints in sequence.
+    PathFollow {
+        /// Ordered waypoints [[x,y,z], ...].
+        waypoints: Vec<[f32; 3]>,
+        /// Movement speed in units per second.
+        #[serde(default = "default_path_speed")]
+        speed: f32,
+        /// Loop mode: "loop" wraps back to start, "ping_pong" reverses.
+        #[serde(default = "default_path_mode")]
+        mode: PathMode,
+        /// Smoothly interpolate rotation toward movement direction.
+        #[serde(default)]
+        orient_to_path: bool,
+    },
+    /// Bouncing on a surface with gravity.
+    Bounce {
+        /// Height of initial/max bounce.
+        #[serde(default = "default_bounce_height")]
+        height: f32,
+        /// Gravity acceleration (units/s^2).
+        #[serde(default = "default_bounce_gravity")]
+        gravity: f32,
+        /// Energy retained per bounce (0.0-1.0).
+        #[serde(default = "default_bounce_damping")]
+        damping: f32,
+        /// Surface Y level to bounce on.
+        #[serde(default)]
+        surface_y: f32,
+    },
 }
 
 fn default_orbit_radius() -> f32 {
@@ -398,6 +429,30 @@ fn default_pulse_min() -> f32 {
 }
 fn default_pulse_max() -> f32 {
     1.1
+}
+fn default_path_speed() -> f32 {
+    2.0
+}
+fn default_path_mode() -> PathMode {
+    PathMode::Loop
+}
+fn default_bounce_height() -> f32 {
+    3.0
+}
+fn default_bounce_gravity() -> f32 {
+    9.8
+}
+fn default_bounce_damping() -> f32 {
+    0.7
+}
+
+/// Path follow loop mode.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PathMode {
+    Loop,
+    PingPong,
+    Once,
 }
 
 // ---------------------------------------------------------------------------

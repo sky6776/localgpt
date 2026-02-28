@@ -475,7 +475,21 @@ fn process_gen_commands(
                     &env_data,
                 )
             }
-            GenCommand::LoadWorld { path } => {
+            GenCommand::LoadWorld { path, clear } => {
+                // Clear existing scene before loading if requested.
+                if clear {
+                    handle_clear_scene(
+                        true,  // keep camera
+                        true,  // keep lights
+                        &mut commands,
+                        &mut params.registry,
+                        &params.gen_entities,
+                        &mut params.audio_engine,
+                        &mut params.behavior_state,
+                        &mut params.pending_world,
+                    );
+                }
+
                 let result = super::world::handle_load_world(
                     &path,
                     &params.workspace,

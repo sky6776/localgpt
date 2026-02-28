@@ -186,14 +186,15 @@ See `docs/gen-audio.md` for detailed architecture and usage examples.
 
 **Behavior System:**
 - **Declarative behaviors:** Data-driven entity animations (no scripting required)
-- **Types:** `orbit` (around entity/point), `spin` (local rotation), `bob` (sinusoidal oscillation), `look_at` (track target), `pulse` (scale breathing)
+- **Types:** `orbit` (around entity/point), `spin` (local rotation), `bob` (sinusoidal oscillation), `look_at` (track target), `pulse` (scale breathing), `path_follow` (waypoint path, loop/ping-pong/once), `bounce` (gravity bounce with damping)
 - **Composable:** Multiple behaviors stack on one entity (e.g., orbit + spin + bob)
-- **Tools:** `gen_add_behavior`, `gen_remove_behavior`, `gen_list_behaviors`
+- **Tools:** `gen_add_behavior`, `gen_remove_behavior`, `gen_list_behaviors`, `gen_pause_behaviors`
 
 **World Skills:**
 - **Save/load scenes as skills:** Complete worlds serialized to skill directories
 - **Format:** `SKILL.md` + `world.toml` + `scene.glb` + `behaviors.toml` + `audio.toml`
-- **Tools:** `gen_save_world`, `gen_load_world`
+- **Tools:** `gen_save_world`, `gen_load_world` (auto-clears scene by default), `gen_clear_scene`
+- **Deferred loading:** glTF scenes load asynchronously; behaviors and audio emitters are applied after entities spawn via `PendingWorldSetup`
 - **Extensible:** World manifest (`world.toml`) supports environment, camera, future asset types
 
 ### Mobile

@@ -194,6 +194,109 @@ fn apply_behavior(
             let scale_factor = *min_scale + (*max_scale - *min_scale) * (t_val * 0.5 + 0.5);
             transform.scale = instance.base_scale * scale_factor;
         }
+
+        BehaviorDef::PathFollow {
+            waypoints,
+            speed,
+            mode,
+            orient_to_path,
+        } => {
+            if waypoints.len() < 2 {
+                return;
+            }
+
+            // Compute total path length and segment lengths
+            let mut segment_lengths = Vec::with_capacity(waypoints.len() - 1);
+            let mut total_length: f32 = 0.0;
+            for i in 0..waypoints.len() - 1 {
+                let a = Vec3::from_array(waypoints[i]);
+                let b = Vec3::from_array(waypoints[i + 1]);
+                let len = a.distance(b);
+                segment_lengths.push(len);
+                total_length += len;
+            }
+            if total_length < 0.001 {
+                return;
+            }
+
+            // Distance traveled along path
+            let raw_distance = speed * t as f32;
+
+            let effective_distance = match mode {
+                PathMode::Loop => raw_distance % total_length,
+                PathMode::PingPong => {
+                    let cycle = total_length * 2.0;
+                    let pos = raw_distance % cycle;
+                    if pos <= total_length {
+                        pos
+                    } else {
+                        cycle - pos
+                    }
+                }
+                PathMode::Once => raw_distance.min(total_length),
+            };
+
+            // Find which segment and interpolate
+            let mut remaining = effective_distance;
+            let mut pos = Vec3::from_array(waypoints[0]);
+            let mut direction = Vec3::ZERO;
+            for (i, seg_len) in segment_lengths.iter().enumerate() {
+                if remaining <= *seg_len {
+                    let frac = if *seg_len > 0.001 {
+                        remaining / *seg_len
+                    } else {
+                        0.0
+                    };
+                    let a = Vec3::from_array(waypoints[i]);
+                    let b = Vec3::from_array(waypoints[i + 1]);
+                    pos = a.lerp(b, frac);
+                    direction = (b - a).normalize_or(Vec3::ZERO);
+                    break;
+                }
+                remaining -= *seg_len;
+            }
+
+            transform.translation = pos;
+
+            if *orient_to_path && direction.length_squared() > 0.001 {
+                let target = transform.translation + direction;
+                transform.look_at(target, Vec3::Y);
+            }
+        }
+
+        BehaviorDef::Bounce {
+            height,
+            gravity,
+            damping,
+            surface_y,
+        } => {
+            // Simulate bouncing: each bounce cycle has a parabolic arc.
+            // Time for one full bounce at a given height h: t = 2 * sqrt(2h/g)
+            let base_velocity = (2.0 * gravity * height).sqrt();
+            let mut vel = base_velocity;
+            let mut time_remaining = t as f32;
+            let mut bounce_count = 0u32;
+
+            // Skip through completed bounces
+            loop {
+                if vel < 0.01 || bounce_count > 100 {
+                    // Settled
+                    transform.translation.y = *surface_y;
+                    return;
+                }
+                let bounce_duration = 2.0 * vel / gravity;
+                if time_remaining <= bounce_duration {
+                    break;
+                }
+                time_remaining -= bounce_duration;
+                vel *= damping.sqrt(); // damping applies to energy, sqrt for velocity
+                bounce_count += 1;
+            }
+
+            // Within current bounce: y = v*t - 0.5*g*t^2
+            let y = vel * time_remaining - 0.5 * gravity * time_remaining * time_remaining;
+            transform.translation.y = surface_y + y.max(0.0);
+        }
     }
 }
 
@@ -330,6 +433,8 @@ fn behavior_type_name(def: &BehaviorDef) -> String {
         BehaviorDef::Bob { .. } => "bob".to_string(),
         BehaviorDef::LookAt { .. } => "look_at".to_string(),
         BehaviorDef::Pulse { .. } => "pulse".to_string(),
+        BehaviorDef::PathFollow { .. } => "path_follow".to_string(),
+        BehaviorDef::Bounce { .. } => "bounce".to_string(),
     }
 }
 
@@ -371,6 +476,26 @@ fn behavior_description(def: &BehaviorDef) -> String {
         } => format!(
             "Pulse {:.2}-{:.2}x at {:.2}Hz",
             min_scale, max_scale, frequency
+        ),
+        BehaviorDef::PathFollow {
+            waypoints,
+            speed,
+            mode,
+            ..
+        } => format!(
+            "PathFollow {} waypoints at {:.1} u/s ({:?})",
+            waypoints.len(),
+            speed,
+            mode
+        ),
+        BehaviorDef::Bounce {
+            height,
+            gravity,
+            damping,
+            ..
+        } => format!(
+            "Bounce h={:.1} g={:.1} damp={:.2}",
+            height, gravity, damping
         ),
     }
 }
