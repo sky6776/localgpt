@@ -869,7 +869,9 @@ mod tests {
         }
 
         // Update active should reset health
-        manager.update_active("test-conn", Some("telegram".to_string())).await;
+        manager
+            .update_active("test-conn", Some("telegram".to_string()))
+            .await;
 
         let bridges = manager.get_active_bridges().await;
         assert_eq!(bridges[0].health, HealthStatus::Healthy);

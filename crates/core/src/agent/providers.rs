@@ -10,6 +10,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 #[cfg(feature = "claude-cli")]
 use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, RwLock};
 #[cfg(feature = "claude-cli")]
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{debug, info};
@@ -532,6 +533,27 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
             )?))
         }
 
+        "vertex" => {
+            let vertex_config = config.providers.vertex.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Vertex AI provider not configured.\n\
+                    Add to {}/config.toml:\n\n\
+                    [providers.vertex]\n\
+                    service_account_key = \"path/to/service-account.json\"\n\
+                    project_id = \"your-gcp-project\"",
+                    DEFAULT_CONFIG_DIR_STR
+                )
+            })?;
+
+            Ok(Box::new(VertexAiProvider::new(
+                &vertex_config.service_account_key,
+                &vertex_config.project_id,
+                &vertex_config.location,
+                &model_id,
+                config.agent.max_tokens,
+            )?))
+        }
+
         "openai-compat" | "openai_compat" => {
             let compat_config = config.providers.openai_compatible.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
@@ -575,6 +597,7 @@ pub fn create_provider(model: &str, config: &Config) -> Result<Box<dyn LLMProvid
                 - claude-cli/opus, claude-cli/sonnet\n  \
                 - gemini-cli/gemini-3.1-pro-preview\n  \
                 - ollama/llama3, ollama/mistral\n  \
+                - vertex/<model> (Google Vertex AI)\n  \
                 - openai-compat/<model> (OpenRouter, DeepSeek, Groq, etc.)\n\n\
                 Or use aliases: opus, sonnet, haiku, gpt, gpt-mini, grok, glm",
                 provider,
@@ -1939,10 +1962,7 @@ impl LLMProvider for OllamaProvider {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string);
                 return Ok(LLMResponse {
-                    content: LLMResponseContent::ToolCalls {
-                        calls,
-                        text,
-                    },
+                    content: LLMResponseContent::ToolCalls { calls, text },
                     usage,
                 });
             }
@@ -4975,5 +4995,361 @@ impl LLMProvider for GitHubCopilotProvider {
         )?;
 
         openai_provider.summarize(text).await
+    }
+}
+
+// Vertex AI Provider (Google Cloud service account authentication)
+pub struct VertexAiProvider {
+    client: Client,
+    service_account_email: String,
+    private_key_pem: String,
+    project_id: String,
+    location: String,
+    model: String,
+    max_tokens: usize,
+    access_token: Arc<RwLock<String>>,
+    expires_at: Arc<RwLock<Option<u64>>>,
+}
+
+/// Service account JSON key file structure
+#[derive(Deserialize)]
+struct ServiceAccountKey {
+    client_email: String,
+    private_key: String,
+}
+
+/// OAuth2 token response
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    expires_in: u64,
+}
+
+impl VertexAiProvider {
+    pub fn new(
+        service_account_key_path: &str,
+        project_id: &str,
+        location: &str,
+        model: &str,
+        max_tokens: usize,
+    ) -> Result<Self> {
+        let expanded_path = shellexpand::tilde(service_account_key_path);
+        let key_content = std::fs::read_to_string(expanded_path.as_ref()).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read service account key at '{}': {}",
+                expanded_path,
+                e
+            )
+        })?;
+
+        let key: ServiceAccountKey = serde_json::from_str(&key_content)
+            .map_err(|e| anyhow::anyhow!("Invalid service account JSON key: {}", e))?;
+
+        Ok(Self {
+            client: Client::new(),
+            service_account_email: key.client_email,
+            private_key_pem: key.private_key,
+            project_id: project_id.to_string(),
+            location: location.to_string(),
+            model: model.to_string(),
+            max_tokens,
+            access_token: Arc::new(RwLock::new(String::new())),
+            expires_at: Arc::new(RwLock::new(None)),
+        })
+    }
+
+    async fn acquire_access_token(&self) -> Result<(String, u64)> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        let claims = json!({
+            "iss": self.service_account_email,
+            "scope": "https://www.googleapis.com/auth/cloud-platform",
+            "aud": "https://oauth2.googleapis.com/token",
+            "iat": now,
+            "exp": now + 3600,
+        });
+
+        let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(self.private_key_pem.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Invalid RSA private key: {}", e))?;
+
+        let jwt = jsonwebtoken::encode(&header, &claims, &encoding_key)
+            .map_err(|e| anyhow::anyhow!("Failed to sign JWT: {}", e))?;
+
+        let response = self
+            .client
+            .post("https://oauth2.googleapis.com/token")
+            .form(&[
+                ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+                ("assertion", &jwt),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            anyhow::bail!("Vertex AI token exchange failed ({}): {}", status, body);
+        }
+
+        let token_resp: TokenResponse = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("Failed to parse token response: {}", e))?;
+
+        let expires_at = now + token_resp.expires_in;
+        Ok((token_resp.access_token, expires_at))
+    }
+
+    async fn ensure_valid_token(&self) -> Result<String> {
+        // Check if current token is still valid (5-minute buffer)
+        {
+            let token = self
+                .access_token
+                .read()
+                .map_err(|_| anyhow::anyhow!("Lock error"))?;
+            let expires = self
+                .expires_at
+                .read()
+                .map_err(|_| anyhow::anyhow!("Lock error"))?;
+            if let Some(exp) = *expires {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs();
+                if now + 300 < exp && !token.is_empty() {
+                    return Ok(token.clone());
+                }
+            }
+        }
+
+        // Token expired or missing — acquire new one
+        let (new_token, new_expires) = self.acquire_access_token().await?;
+
+        {
+            let mut token = self
+                .access_token
+                .write()
+                .map_err(|_| anyhow::anyhow!("Lock error"))?;
+            let mut expires = self
+                .expires_at
+                .write()
+                .map_err(|_| anyhow::anyhow!("Lock error"))?;
+            *token = new_token.clone();
+            *expires = Some(new_expires);
+        }
+
+        Ok(new_token)
+    }
+
+    fn is_claude_model(&self) -> bool {
+        self.model.starts_with("claude-")
+    }
+
+    fn endpoint_url(&self) -> String {
+        let base = if self.location == "global" {
+            "https://aiplatform.googleapis.com".to_string()
+        } else {
+            format!("https://{}-aiplatform.googleapis.com", self.location)
+        };
+
+        if self.is_claude_model() {
+            format!(
+                "{}/v1/projects/{}/locations/{}/publishers/anthropic/models/{}:rawPredict",
+                base, self.project_id, self.location, self.model
+            )
+        } else {
+            // Gemini models
+            format!(
+                "{}/v1/projects/{}/locations/{}/publishers/google/models/{}:generateContent",
+                base, self.project_id, self.location, self.model
+            )
+        }
+    }
+}
+
+#[async_trait]
+impl LLMProvider for VertexAiProvider {
+    fn name(&self) -> String {
+        "vertex".to_string()
+    }
+
+    async fn chat(
+        &self,
+        messages: &[Message],
+        tools: Option<&[ToolSchema]>,
+    ) -> Result<LLMResponse> {
+        let token = self.ensure_valid_token().await?;
+        let url = self.endpoint_url();
+
+        if self.is_claude_model() {
+            // Use Anthropic Messages API format for Claude models
+            let anthropic_provider =
+                AnthropicProvider::new("unused", "unused", &self.model, self.max_tokens)?;
+            let (system_prompt, formatted_messages) = anthropic_provider.format_messages(messages);
+
+            let mut body = json!({
+                "anthropic_version": "vertex-2023-10-16",
+                "max_tokens": self.max_tokens,
+                "messages": formatted_messages
+            });
+
+            if let Some(system) = system_prompt {
+                body["system"] = json!(system);
+            }
+
+            if let Some(tool_schemas) = tools
+                && !tool_schemas.is_empty()
+            {
+                body["tools"] = json!(anthropic_provider.format_tools(tool_schemas));
+            }
+
+            debug!(
+                "Vertex AI (Claude) request to {}: {}",
+                url,
+                serde_json::to_string_pretty(&body)?
+            );
+
+            let response = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await?;
+
+            let status = response.status();
+            let response_body: Value = response.json().await?;
+            debug!(
+                "Vertex AI (Claude) response: {}",
+                serde_json::to_string_pretty(&response_body)?
+            );
+
+            if !status.is_success() {
+                if let Some(error) = response_body.get("error") {
+                    anyhow::bail!("Vertex AI error: {}", error);
+                }
+                anyhow::bail!("Vertex AI error ({}): {}", status, response_body);
+            }
+
+            // Parse using same logic as AnthropicProvider
+            if let Some(error) = response_body.get("error") {
+                anyhow::bail!("Vertex AI API error: {}", error);
+            }
+
+            let content = response_body["content"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("No content in Vertex AI response"))?;
+
+            let usage = response_body.get("usage").map(|u| Usage {
+                input_tokens: u["input_tokens"].as_u64().unwrap_or(0),
+                output_tokens: u["output_tokens"].as_u64().unwrap_or(0),
+            });
+
+            let tool_calls: Vec<ToolCall> = content
+                .iter()
+                .filter(|c| c["type"] == "tool_use")
+                .map(|c| ToolCall {
+                    id: c["id"].as_str().unwrap_or("").to_string(),
+                    name: c["name"].as_str().unwrap_or("").to_string(),
+                    arguments: serde_json::to_string(&c["input"]).unwrap_or("{}".to_string()),
+                })
+                .collect();
+
+            if !tool_calls.is_empty() {
+                let text = {
+                    let t = content
+                        .iter()
+                        .filter(|c| c["type"] == "text")
+                        .map(|c| c["text"].as_str().unwrap_or(""))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if t.is_empty() { None } else { Some(t) }
+                };
+                return Ok(LLMResponse {
+                    content: LLMResponseContent::ToolCalls {
+                        calls: tool_calls,
+                        text,
+                    },
+                    usage,
+                });
+            }
+
+            let text = content
+                .iter()
+                .filter(|c| c["type"] == "text")
+                .map(|c| c["text"].as_str().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("");
+
+            Ok(LLMResponse {
+                content: LLMResponseContent::Text(text),
+                usage,
+            })
+        } else {
+            // Use Gemini API format
+            let formatted_messages = gemini_format_messages(messages);
+
+            let mut body = json!({
+                "contents": formatted_messages,
+            });
+
+            if let Some(tool_schemas) = tools
+                && !tool_schemas.is_empty()
+            {
+                body["tools"] = json!(gemini_format_tools(tool_schemas));
+            }
+
+            debug!(
+                "Vertex AI (Gemini) request to {}: {}",
+                url,
+                serde_json::to_string_pretty(&body)?
+            );
+
+            let response = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await?;
+
+            let status = response.status();
+            let response_body: Value = response.json().await?;
+            debug!(
+                "Vertex AI (Gemini) response: {}",
+                serde_json::to_string_pretty(&response_body)?
+            );
+
+            if !status.is_success() {
+                if let Some(error) = response_body.get("error") {
+                    anyhow::bail!("Vertex AI error: {}", error);
+                }
+                anyhow::bail!("Vertex AI error ({}): {}", status, response_body);
+            }
+
+            gemini_parse_response(&response_body)
+        }
+    }
+
+    async fn summarize(&self, text: &str) -> Result<String> {
+        let messages = vec![Message {
+            role: Role::User,
+            content: format!(
+                "Please provide a concise summary of the following text:\n\n{}",
+                text
+            ),
+            tool_calls: None,
+            tool_call_id: None,
+            images: Vec::new(),
+        }];
+
+        let response = self.chat(&messages, None).await?;
+        match response.content {
+            LLMResponseContent::Text(text) => Ok(text),
+            LLMResponseContent::ToolCalls { text, .. } => Ok(text.unwrap_or_default()),
+        }
     }
 }

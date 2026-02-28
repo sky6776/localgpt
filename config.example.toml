@@ -46,6 +46,9 @@
 # GitHub Copilot (requires OAuth):
 #   - "github-copilot/gpt-4o"
 #
+# Vertex AI (requires service account key):
+#   - "vertex/claude-opus-4-6", "vertex/gemini-2.0-flash"
+#
 # OpenAI Compatible (requires base_url):
 #   - "openai-compatible/deepseek-coder"
 #
@@ -146,6 +149,18 @@ base_url = "https://api.anthropic.com"
 # [providers.gemini]
 # api_key = "${GEMINI_API_KEY}"
 # base_url = "https://generativelanguage.googleapis.com"
+
+# Google Vertex AI configuration (service account authentication)
+# Access Claude and Gemini models via Google Cloud's enterprise platform
+# 1. Create a service account in Google Cloud Console
+# 2. Grant "Vertex AI User" role
+# 3. Download the JSON key file
+# [providers.vertex]
+# service_account_key = "~/.config/gcloud/service-account.json"  # supports ~ and ${ENV}
+# project_id = "${GOOGLE_CLOUD_PROJECT}"
+# location = "us-central1"  # default; use "global" for global endpoint
+#
+# Usage: vertex/claude-opus-4-6, vertex/gemini-2.0-flash
 
 # Gemini OAuth configuration (for Google AI subscription plans)
 # Use this for Google Gemini subscription authentication with OAuth 2.0

@@ -83,6 +83,9 @@ readability = "0.3"
 sha2 = "0.10"
 hmac = "0.12"
 
+# JWT signing (for Vertex AI service account auth)
+jsonwebtoken = "9"
+
 [target.'cfg(target_os = "linux")'.build-dependencies]
 cc = "1"
 

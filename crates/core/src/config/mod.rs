@@ -403,6 +403,10 @@ pub struct ProvidersConfig {
     /// (OpenRouter, DeepSeek, Groq, vLLM, LiteLLM, Together AI, Fireworks, etc.)
     #[serde(default)]
     pub openai_compatible: Option<OpenAICompatibleConfig>,
+
+    /// Google Vertex AI (service account key authentication)
+    #[serde(default)]
+    pub vertex: Option<VertexAiConfig>,
 }
 
 /// Configuration for OpenAI-compatible providers (OpenRouter, DeepSeek, Groq, etc.)
@@ -417,6 +421,20 @@ pub struct OpenAICompatibleConfig {
     /// Extra headers to include in every request (e.g., OpenRouter attribution)
     #[serde(default)]
     pub extra_headers: std::collections::HashMap<String, String>,
+}
+
+/// Configuration for Google Vertex AI (service account key authentication)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VertexAiConfig {
+    /// Path to service account JSON key file (supports ~ and ${ENV_VAR} expansion)
+    pub service_account_key: String,
+
+    /// Google Cloud project ID (supports ${ENV_VAR} expansion)
+    pub project_id: String,
+
+    /// Regional endpoint location (default: "us-central1")
+    #[serde(default = "default_vertex_location")]
+    pub location: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -872,6 +890,9 @@ fn default_glm_base_url() -> String {
 fn default_gemini_base_url() -> String {
     "https://generativelanguage.googleapis.com".to_string()
 }
+fn default_vertex_location() -> String {
+    "us-central1".to_string()
+}
 fn default_true() -> bool {
     true
 }
@@ -1224,6 +1245,10 @@ impl Config {
         if let Some(ref mut openai_compat) = self.providers.openai_compatible {
             openai_compat.api_key = expand_env(&openai_compat.api_key);
             openai_compat.base_url = expand_env(&openai_compat.base_url);
+        }
+        if let Some(ref mut vertex) = self.providers.vertex {
+            vertex.service_account_key = expand_env(&vertex.service_account_key);
+            vertex.project_id = expand_env(&vertex.project_id);
         }
         if let Some(ref mut auth_token) = self.server.auth_token {
             *auth_token = expand_env(auth_token);
