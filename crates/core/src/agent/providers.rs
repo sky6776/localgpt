@@ -2967,25 +2967,90 @@ impl LLMProvider for GeminiCliProvider {
 
 #[cfg(feature = "codex-cli")]
 /// Parse Codex CLI JSON output, returning (response_text, session_id)
-fn parse_codex_cli_output(stdout: &str) -> Result<(String, Option<String>)> {
-    if let Ok(json) = serde_json::from_str::<Value>(stdout) {
-        let text = json
-            .get("response")
+fn parse_codex_cli_output(
+    stdout: &str,
+    stderr: &str,
+    last_message: Option<&str>,
+) -> Result<(String, Option<String>)> {
+    fn extract_text(json: &Value) -> Option<String> {
+        json.get("response")
             .and_then(|v| v.as_str())
+            .or_else(|| json.get("result").and_then(|v| v.as_str()))
+            .or_else(|| json.get("message").and_then(|v| v.as_str()))
             .or_else(|| json.get("text").and_then(|v| v.as_str()))
             .or_else(|| json.get("content").and_then(|v| v.as_str()))
             .map(|s| s.to_string())
-            .unwrap_or_else(|| stdout.trim().to_string());
+    }
 
-        let session_id = json
-            .get("session_id")
+    fn extract_session_id(json: &Value) -> Option<String> {
+        json.get("session_id")
+            .or_else(|| json.get("sessionId"))
+            .or_else(|| json.get("conversation_id"))
+            .or_else(|| json.get("conversationId"))
+            .or_else(|| json.get("thread_id"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+    }
 
+    let mut response = last_message
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let mut session_id: Option<String> = None;
+
+    for raw in [stdout, stderr] {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Legacy single-JSON output support.
+        if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
+            if response.is_none() {
+                response = extract_text(&json);
+            }
+            if session_id.is_none() {
+                session_id = extract_session_id(&json);
+            }
+        }
+
+        // Current Codex CLI emits JSONL events (one JSON object per line).
+        for line in trimmed.lines() {
+            let line = line.trim();
+            if !(line.starts_with('{') && line.ends_with('}')) {
+                continue;
+            }
+            let Ok(json) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+
+            if session_id.is_none() {
+                if json.get("type").and_then(|v| v.as_str()) == Some("thread.started") {
+                    session_id = json
+                        .get("thread_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                } else {
+                    session_id = extract_session_id(&json);
+                }
+            }
+
+            if response.is_none() {
+                response = extract_text(&json);
+            }
+        }
+    }
+
+    if let Some(text) = response {
         return Ok((text, session_id));
     }
 
-    Ok((stdout.trim().to_string(), None))
+    let fallback = if !stdout.trim().is_empty() {
+        stdout.trim().to_string()
+    } else {
+        stderr.trim().to_string()
+    };
+    Ok((fallback, session_id))
 }
 
 #[cfg(feature = "codex-cli")]
@@ -3026,27 +3091,38 @@ impl CodexCliProvider {
         prompt: &str,
         system_prompt: Option<&str>,
         existing_session: Option<&str>,
-    ) -> Result<(std::process::Output, bool)> {
+    ) -> Result<(std::process::Output, Option<String>, bool)> {
         use std::process::Command;
 
-        let mut args = vec!["-q".to_string(), "--json".to_string()];
+        let mut args = vec!["exec".to_string()];
+        if existing_session.is_some() {
+            args.push("resume".to_string());
+        }
+        args.push("--json".to_string());
 
         if !self.model.is_empty() {
             args.push("--model".to_string());
             args.push(self.model.clone());
         }
+        args.push("--skip-git-repo-check".to_string());
 
-        if let Some(sys) = system_prompt {
-            args.push("--system-prompt".to_string());
-            args.push(sys.to_string());
-        }
+        let output_file = std::env::temp_dir().join(format!(
+            "localgpt-codex-last-message-{}.txt",
+            uuid::Uuid::new_v4()
+        ));
+        args.push("--output-last-message".to_string());
+        args.push(output_file.to_string_lossy().to_string());
 
         if let Some(sid) = existing_session {
-            args.push("--session".to_string());
             args.push(sid.to_string());
         }
 
-        args.push(prompt.to_string());
+        let effective_prompt = if let Some(sys) = system_prompt {
+            format!("{}\n\n{}", sys, prompt)
+        } else {
+            prompt.to_string()
+        };
+        args.push(effective_prompt);
 
         debug!(
             "Codex CLI: {} {:?} (cwd: {:?})",
@@ -3071,7 +3147,13 @@ impl CodexCliProvider {
             anyhow::bail!("Codex CLI failed: {}", stderr);
         }
 
-        Ok((output, existing_session.is_none()))
+        let last_message = std::fs::read_to_string(&output_file)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let _ = std::fs::remove_file(&output_file);
+
+        Ok((output, last_message, existing_session.is_none()))
     }
 }
 
@@ -3108,7 +3190,7 @@ impl LLMProvider for CodexCliProvider {
             .map_err(|e| anyhow::anyhow!("Session lock poisoned: {}", e))?
             .clone();
 
-        let (output, used_new_session) = self
+        let (output, last_message, used_new_session) = self
             .execute_cli_command(
                 &prompt,
                 system_prompt.as_deref(),
@@ -3117,7 +3199,9 @@ impl LLMProvider for CodexCliProvider {
             .await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let (response, new_session_id) = parse_codex_cli_output(&stdout)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (response, new_session_id) =
+            parse_codex_cli_output(&stdout, &stderr, last_message.as_deref())?;
 
         if let Some(ref new_cli_sid) = new_session_id {
             let mut cli_session = self

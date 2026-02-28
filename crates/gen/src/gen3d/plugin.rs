@@ -303,9 +303,7 @@ fn process_gen_commands(
                 handle_delete_entity(&name, &mut commands, &mut params.registry)
             }
             GenCommand::SetCamera(cmd) => handle_set_camera(cmd, &mut commands, &params.registry),
-            GenCommand::SetLight(cmd) => {
-                handle_set_light(cmd, &mut commands, &mut params.registry)
-            }
+            GenCommand::SetLight(cmd) => handle_set_light(cmd, &mut commands, &mut params.registry),
             GenCommand::SetEnvironment(cmd) => handle_set_environment(cmd, &mut commands),
             GenCommand::SpawnMesh(cmd) => handle_spawn_mesh(
                 cmd,
@@ -374,14 +372,12 @@ fn process_gen_commands(
             GenCommand::SetAmbience(cmd) => {
                 audio::handle_set_ambience(cmd, &mut params.audio_engine)
             }
-            GenCommand::SpawnAudioEmitter(cmd) => {
-                audio::handle_spawn_audio_emitter(
-                    cmd,
-                    &mut params.audio_engine,
-                    &mut commands,
-                    &params.registry,
-                )
-            }
+            GenCommand::SpawnAudioEmitter(cmd) => audio::handle_spawn_audio_emitter(
+                cmd,
+                &mut params.audio_engine,
+                &mut commands,
+                &params.registry,
+            ),
             GenCommand::ModifyAudioEmitter(cmd) => {
                 audio::handle_modify_audio_emitter(cmd, &mut params.audio_engine)
             }

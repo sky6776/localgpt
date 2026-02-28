@@ -474,7 +474,10 @@ mod tests {
     /// Verify LocalGPT.md is the only security-sensitive editable file.
     #[test]
     fn only_policy_file_is_security_sensitive() {
-        for &f in REGULAR_EDITABLE_FILES.iter().chain(SECURITY_EDITABLE_FILES.iter()) {
+        for &f in REGULAR_EDITABLE_FILES
+            .iter()
+            .chain(SECURITY_EDITABLE_FILES.iter())
+        {
             if f == security::POLICY_FILENAME {
                 assert!(is_security_file(f), "{} should be security-sensitive", f);
             } else {
