@@ -1902,11 +1902,15 @@ fn snapshot_entity(
     // Light
     if let Ok(dl) = directional_lights.get(entity) {
         let c = dl.color.to_srgba();
+        let dir = transforms
+            .get(entity)
+            .ok()
+            .map(|t| t.forward().as_vec3().to_array());
         we.light = Some(wt::LightDef {
             light_type: wt::LightType::Directional,
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: dl.illuminance,
-            direction: None,
+            direction: dir,
             shadows: dl.shadows_enabled,
         });
     } else if let Ok(pl) = point_lights.get(entity) {
@@ -1920,11 +1924,15 @@ fn snapshot_entity(
         });
     } else if let Ok(sl) = spot_lights.get(entity) {
         let c = sl.color.to_srgba();
+        let dir = transforms
+            .get(entity)
+            .ok()
+            .map(|t| t.forward().as_vec3().to_array());
         we.light = Some(wt::LightDef {
             light_type: wt::LightType::Spot,
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: sl.intensity,
-            direction: None,
+            direction: dir,
             shadows: sl.shadows_enabled,
         });
     }

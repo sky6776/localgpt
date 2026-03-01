@@ -256,11 +256,12 @@ pub fn handle_save_world(
         if gen_ent.entity_type == GenEntityType::Light {
             if let Ok(dl) = directional_lights.get(bevy_entity) {
                 let c = dl.color.to_srgba();
+                let dir = transform.forward().as_vec3().to_array();
                 we.light = Some(wt::LightDef {
                     light_type: wt::LightType::Directional,
                     color: [c.red, c.green, c.blue, c.alpha],
                     intensity: dl.illuminance,
-                    direction: None,
+                    direction: Some(dir),
                     shadows: dl.shadows_enabled,
                 });
             } else if let Ok(pl) = point_lights.get(bevy_entity) {
@@ -274,11 +275,12 @@ pub fn handle_save_world(
                 });
             } else if let Ok(sl) = spot_lights.get(bevy_entity) {
                 let c = sl.color.to_srgba();
+                let dir = transform.forward().as_vec3().to_array();
                 we.light = Some(wt::LightDef {
                     light_type: wt::LightType::Spot,
                     color: [c.red, c.green, c.blue, c.alpha],
                     intensity: sl.intensity,
-                    direction: None,
+                    direction: Some(dir),
                     shadows: sl.shadows_enabled,
                 });
             }
