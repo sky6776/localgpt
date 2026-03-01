@@ -245,11 +245,27 @@ pub fn handle_save_world(
         {
             let c = mat.base_color.to_srgba();
             let e = mat.emissive;
+            let alpha_mode = match mat.alpha_mode {
+                AlphaMode::Opaque => None,
+                AlphaMode::Mask(cutoff) => Some(wt::AlphaModeDef::Mask(cutoff)),
+                AlphaMode::Blend => Some(wt::AlphaModeDef::Blend),
+                AlphaMode::Add => Some(wt::AlphaModeDef::Add),
+                AlphaMode::Multiply => Some(wt::AlphaModeDef::Multiply),
+                _ => None,
+            };
             we.material = Some(wt::MaterialDef {
                 color: [c.red, c.green, c.blue, c.alpha],
                 metallic: mat.metallic,
                 roughness: mat.perceptual_roughness,
                 emissive: [e.red, e.green, e.blue, e.alpha],
+                alpha_mode,
+                unlit: if mat.unlit { Some(true) } else { None },
+                double_sided: if mat.double_sided { Some(true) } else { None },
+                reflectance: if (mat.reflectance - 0.5).abs() > f32::EPSILON {
+                    Some(mat.reflectance)
+                } else {
+                    None
+                },
             });
         }
 

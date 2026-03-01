@@ -55,7 +55,7 @@ pub use entity::{EntityPatch, WorldEntity, WorldTransform};
 pub use history::{EditHistory, EditOp, WorldEdit};
 pub use identity::{CreationId, EntityId, EntityName, EntityRef};
 pub use light::{LightDef, LightType};
-pub use material::MaterialDef;
+pub use material::{AlphaModeDef, MaterialDef};
 pub use shape::{PrimitiveShapeKind, Shape};
 pub use spatial::ChunkCoord;
 pub use tour::{TourDef, TourMode, TourWaypoint};

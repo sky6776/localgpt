@@ -116,6 +116,10 @@ impl From<&SpawnPrimitiveCmd> for wt::MaterialDef {
             metallic: cmd.metallic,
             roughness: cmd.roughness,
             emissive: cmd.emissive,
+            alpha_mode: None,
+            unlit: None,
+            double_sided: None,
+            reflectance: None,
         }
     }
 }

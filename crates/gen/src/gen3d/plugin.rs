@@ -1900,18 +1900,7 @@ fn spawn_world_entities(
             // Entity with a parametric shape → spawn mesh
             let mesh_handle = shape_to_mesh(shape, meshes);
             let mat = we.material.as_ref().cloned().unwrap_or_default();
-            let material_handle = materials.add(StandardMaterial {
-                base_color: Color::srgba(mat.color[0], mat.color[1], mat.color[2], mat.color[3]),
-                metallic: mat.metallic,
-                perceptual_roughness: mat.roughness,
-                emissive: bevy::color::LinearRgba::new(
-                    mat.emissive[0],
-                    mat.emissive[1],
-                    mat.emissive[2],
-                    mat.emissive[3],
-                ),
-                ..default()
-            });
+            let material_handle = materials.add(material_def_to_standard(&mat));
 
             let parametric = ParametricShape {
                 shape: shape.clone(),
@@ -2018,6 +2007,41 @@ fn shape_to_mesh(shape: &wt::Shape, meshes: &mut ResMut<Assets<Mesh>>) -> Handle
             meshes.add(Plane3d::new(Vec3::Y, Vec2::new(*x / 2.0, *z / 2.0)))
         }
     }
+}
+
+/// Convert a `MaterialDef` to a Bevy `StandardMaterial`.
+fn material_def_to_standard(mat: &wt::MaterialDef) -> StandardMaterial {
+    let mut std_mat = StandardMaterial {
+        base_color: Color::srgba(mat.color[0], mat.color[1], mat.color[2], mat.color[3]),
+        metallic: mat.metallic,
+        perceptual_roughness: mat.roughness,
+        emissive: bevy::color::LinearRgba::new(
+            mat.emissive[0],
+            mat.emissive[1],
+            mat.emissive[2],
+            mat.emissive[3],
+        ),
+        ..default()
+    };
+    if let Some(ref am) = mat.alpha_mode {
+        std_mat.alpha_mode = match am {
+            wt::AlphaModeDef::Opaque => AlphaMode::Opaque,
+            wt::AlphaModeDef::Mask(cutoff) => AlphaMode::Mask(*cutoff),
+            wt::AlphaModeDef::Blend => AlphaMode::Blend,
+            wt::AlphaModeDef::Add => AlphaMode::Add,
+            wt::AlphaModeDef::Multiply => AlphaMode::Multiply,
+        };
+    }
+    if let Some(unlit) = mat.unlit {
+        std_mat.unlit = unlit;
+    }
+    if let Some(ds) = mat.double_sided {
+        std_mat.double_sided = ds;
+    }
+    if let Some(r) = mat.reflectance {
+        std_mat.reflectance = r;
+    }
+    std_mat
 }
 
 /// Insert a light component onto an existing entity command builder.
@@ -2224,11 +2248,27 @@ fn snapshot_entity(
     {
         let c = mat.base_color.to_srgba();
         let e = mat.emissive;
+        let alpha_mode = match mat.alpha_mode {
+            AlphaMode::Opaque => None,
+            AlphaMode::Mask(cutoff) => Some(wt::AlphaModeDef::Mask(cutoff)),
+            AlphaMode::Blend => Some(wt::AlphaModeDef::Blend),
+            AlphaMode::Add => Some(wt::AlphaModeDef::Add),
+            AlphaMode::Multiply => Some(wt::AlphaModeDef::Multiply),
+            _ => None,
+        };
         we.material = Some(wt::MaterialDef {
             color: [c.red, c.green, c.blue, c.alpha],
             metallic: mat.metallic,
             roughness: mat.perceptual_roughness,
             emissive: [e.red, e.green, e.blue, e.alpha],
+            alpha_mode,
+            unlit: if mat.unlit { Some(true) } else { None },
+            double_sided: if mat.double_sided { Some(true) } else { None },
+            reflectance: if (mat.reflectance - 0.5).abs() > f32::EPSILON {
+                Some(mat.reflectance)
+            } else {
+                None
+            },
         });
     }
 
