@@ -346,6 +346,10 @@ fn process_gen_commands(
                 &params.material_handles,
                 &params.materials,
                 &params.behaviors_query,
+                &params.parametric_shapes,
+                &params.directional_lights,
+                &params.point_lights,
+                &params.spot_lights,
             ),
             GenCommand::Screenshot {
                 width,
@@ -1263,6 +1267,10 @@ fn handle_entity_info(
     material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
     material_assets: &Assets<StandardMaterial>,
     behaviors_query: &Query<&mut EntityBehaviors>,
+    parametric_shapes: &Query<&ParametricShape>,
+    directional_lights: &Query<&DirectionalLight>,
+    point_lights: &Query<&PointLight>,
+    spot_lights: &Query<&SpotLight>,
 ) -> GenResponse {
     let Some(entity) = registry.get_entity(name) else {
         return GenResponse::Error {
@@ -1283,19 +1291,60 @@ fn handle_entity_info(
         .map(|v| *v != Visibility::Hidden)
         .unwrap_or(true);
 
-    let (color, metallic, roughness) = material_handles
+    let shape_name = parametric_shapes
+        .get(entity)
+        .ok()
+        .map(|p| p.shape.kind().to_string());
+
+    let (color, metallic, roughness, emissive) = material_handles
         .get(entity)
         .ok()
         .and_then(|h| material_assets.get(&h.0))
         .map(|mat| {
             let c = mat.base_color.to_srgba();
+            let e = mat.emissive;
+            let emissive_arr = [e.red, e.green, e.blue, e.alpha];
+            let has_emissive = emissive_arr.iter().any(|&v| v > 0.0);
             (
                 Some([c.red, c.green, c.blue, c.alpha]),
                 Some(mat.metallic),
                 Some(mat.perceptual_roughness),
+                if has_emissive {
+                    Some(emissive_arr)
+                } else {
+                    None
+                },
             )
         })
-        .unwrap_or((None, None, None));
+        .unwrap_or((None, None, None, None));
+
+    let light_info = if let Ok(dl) = directional_lights.get(entity) {
+        let c = dl.color.to_srgba();
+        Some(LightInfoData {
+            light_type: "directional".to_string(),
+            color: [c.red, c.green, c.blue, c.alpha],
+            intensity: dl.illuminance,
+            shadows: dl.shadows_enabled,
+        })
+    } else if let Ok(pl) = point_lights.get(entity) {
+        let c = pl.color.to_srgba();
+        Some(LightInfoData {
+            light_type: "point".to_string(),
+            color: [c.red, c.green, c.blue, c.alpha],
+            intensity: pl.intensity,
+            shadows: pl.shadows_enabled,
+        })
+    } else if let Ok(sl) = spot_lights.get(entity) {
+        let c = sl.color.to_srgba();
+        Some(LightInfoData {
+            light_type: "spot".to_string(),
+            color: [c.red, c.green, c.blue, c.alpha],
+            intensity: sl.intensity,
+            shadows: sl.shadows_enabled,
+        })
+    } else {
+        None
+    };
 
     let children: Vec<String> = children_query
         .get(entity)
@@ -1334,6 +1383,7 @@ fn handle_entity_info(
             .map(|id| id.0)
             .unwrap_or(entity.to_bits()),
         entity_type,
+        shape: shape_name,
         position: transform.translation.to_array(),
         rotation_degrees: [
             euler.0.to_degrees(),
@@ -1344,7 +1394,9 @@ fn handle_entity_info(
         color,
         metallic,
         roughness,
+        emissive,
         visible,
+        light: light_info,
         children,
         parent,
         behaviors: behavior_summaries,

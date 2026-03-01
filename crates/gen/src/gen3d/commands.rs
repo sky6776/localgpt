@@ -709,6 +709,8 @@ pub struct EntityInfoData {
     pub name: String,
     pub entity_id: u64,
     pub entity_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
     pub position: [f32; 3],
     pub rotation_degrees: [f32; 3],
     pub scale: [f32; 3],
@@ -718,11 +720,24 @@ pub struct EntityInfoData {
     pub metallic: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roughness: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emissive: Option<[f32; 4]>,
     pub visible: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub light: Option<LightInfoData>,
     pub children: Vec<String>,
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviors: Vec<BehaviorSummary>,
+}
+
+/// Light component info returned by `gen_entity_info`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightInfoData {
+    pub light_type: String,
+    pub color: [f32; 4],
+    pub intensity: f32,
+    pub shadows: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
