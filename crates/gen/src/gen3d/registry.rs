@@ -6,11 +6,25 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+use localgpt_world_types as wt;
+
 /// Marker component attached to every Gen-managed entity.
 #[derive(Component)]
 pub struct GenEntity {
     /// What kind of entity this is (for scene_info reporting).
     pub entity_type: GenEntityType,
+    /// Stable entity ID from the world data model (survives renames).
+    pub world_id: Option<wt::EntityId>,
+}
+
+/// Bevy component storing the parametric shape alongside the mesh.
+///
+/// When a primitive is spawned, Bevy gets the mesh (triangles) and we also
+/// store the parametric `Shape` here so it survives save/load cycles.
+/// Without this, the shape info is lost when exporting to glTF.
+#[derive(Component, Clone, Debug)]
+pub struct ParametricShape {
+    pub shape: wt::Shape,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

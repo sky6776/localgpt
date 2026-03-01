@@ -491,6 +491,7 @@ pub fn handle_spawn_audio_emitter(
             Name::new(cmd.name.clone()),
             GenEntity {
                 entity_type: super::registry::GenEntityType::AudioEmitter,
+                world_id: None,
             },
             AudioEmitter {
                 sound: cmd.sound.clone(),

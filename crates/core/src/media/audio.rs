@@ -38,12 +38,8 @@ pub trait SttProvider: Send + Sync {
     /// # Returns
     /// * `Ok(String)` - Transcribed text
     /// * `Err` - If transcription fails
-    async fn transcribe(
-        &self,
-        audio: &[u8],
-        mime_type: &str,
-        config: &SttConfig,
-    ) -> Result<String>;
+    async fn transcribe(&self, audio: &[u8], mime_type: &str, config: &SttConfig)
+    -> Result<String>;
 }
 
 /// Configuration for a single STT provider
@@ -288,11 +284,7 @@ impl SttProvider for CliProvider {
 
         let args = self.substitute_args(&input_path, temp_dir.path(), &config.language);
 
-        debug!(
-            "Running CLI STT: {} {}",
-            self.command,
-            args.join(" ")
-        );
+        debug!("Running CLI STT: {} {}", self.command, args.join(" "));
 
         let output = Command::new(&self.command)
             .args(&args)
@@ -430,7 +422,11 @@ impl SttRegistry {
         for provider in &self.providers {
             match provider.transcribe(audio, mime_type, &self.config).await {
                 Ok(text) => {
-                    info!("Transcribed audio via {} ({} chars)", provider.id(), text.len());
+                    info!(
+                        "Transcribed audio via {} ({} chars)",
+                        provider.id(),
+                        text.len()
+                    );
                     return Ok(text);
                 }
                 Err(e) => {
@@ -510,11 +506,8 @@ mod tests {
             ],
         );
 
-        let args = provider.substitute_args(
-            Path::new("/tmp/audio.ogg"),
-            Path::new("/tmp/output"),
-            "en",
-        );
+        let args =
+            provider.substitute_args(Path::new("/tmp/audio.ogg"), Path::new("/tmp/output"), "en");
 
         assert_eq!(args[0], "/tmp/audio.ogg");
         assert_eq!(args[1], "--output_dir");

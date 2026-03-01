@@ -135,8 +135,8 @@ impl DocumentLoaders {
             );
         }
 
-        let text = String::from_utf8(output.stdout)
-            .context("Document loader produced non-UTF8 output")?;
+        let text =
+            String::from_utf8(output.stdout).context("Document loader produced non-UTF8 output")?;
 
         Ok(text)
     }
@@ -178,8 +178,12 @@ fn sanitize_path(path: &Path) -> Result<String> {
 /// Get installation hints for common document tools
 fn get_install_hint(ext: &str) -> &'static str {
     match ext {
-        "pdf" => "Hint: Install poppler-utils (apt: poppler-utils, brew: poppler, dnf: poppler-utils)",
-        "docx" | "epub" | "html" | "htm" => "Hint: Install pandoc (apt: pandoc, brew: pandoc, dnf: pandoc)",
+        "pdf" => {
+            "Hint: Install poppler-utils (apt: poppler-utils, brew: poppler, dnf: poppler-utils)"
+        }
+        "docx" | "epub" | "html" | "htm" => {
+            "Hint: Install pandoc (apt: pandoc, brew: pandoc, dnf: pandoc)"
+        }
         "xlsx" => "Hint: Install xlsx2csv (pip: xlsx2csv)",
         "pptx" => "Hint: Install LibreOffice (apt: libreoffice, brew: libreoffice)",
         _ => "Hint: Check the loader command in your config.toml",
@@ -227,7 +231,13 @@ mod tests {
         let loaders = DocumentLoaders::with_custom(&custom);
 
         // Custom loader should override default
-        assert!(loaders.loaders.get("pdf").unwrap().contains("my-custom-pdf-tool"));
+        assert!(
+            loaders
+                .loaders
+                .get("pdf")
+                .unwrap()
+                .contains("my-custom-pdf-tool")
+        );
     }
 
     #[test]

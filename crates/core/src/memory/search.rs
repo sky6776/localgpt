@@ -104,7 +104,9 @@ impl Default for MmrReranker {
 impl MmrReranker {
     /// Create a new MMR reranker with custom lambda
     pub fn new(lambda: f64) -> Self {
-        Self { lambda: lambda.clamp(0.0, 1.0) }
+        Self {
+            lambda: lambda.clamp(0.0, 1.0),
+        }
     }
 
     /// Re-rank search results using MMR algorithm.
@@ -120,10 +122,8 @@ impl MmrReranker {
         }
 
         // Tokenize all chunks once
-        let token_sets: Vec<HashSet<String>> = chunks
-            .iter()
-            .map(|c| tokenize(&c.content))
-            .collect();
+        let token_sets: Vec<HashSet<String>> =
+            chunks.iter().map(|c| tokenize(&c.content)).collect();
 
         // Track original scores
         let original_scores: Vec<f64> = chunks.iter().map(|c| c.score).collect();
@@ -133,15 +133,11 @@ impl MmrReranker {
         let mut remaining: Vec<usize> = (0..chunks.len()).collect();
 
         // Select first item (highest relevance)
-        if let Some((best_pos, best_idx)) = remaining
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| {
-                original_scores[**a]
-                    .partial_cmp(&original_scores[**b])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        {
+        if let Some((best_pos, best_idx)) = remaining.iter().enumerate().max_by(|(_, a), (_, b)| {
+            original_scores[**a]
+                .partial_cmp(&original_scores[**b])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
             selected.push(remaining.remove(best_pos));
         }
 
@@ -151,21 +147,31 @@ impl MmrReranker {
                 .iter()
                 .enumerate()
                 .max_by(|(pos_a, idx_a), (pos_b, idx_b)| {
-                    let mmr_a = self.compute_mmr(**idx_a, original_scores[**idx_a], &selected, &token_sets);
-                    let mmr_b = self.compute_mmr(**idx_b, original_scores[**idx_b], &selected, &token_sets);
-                    mmr_a.partial_cmp(&mmr_b).unwrap_or(std::cmp::Ordering::Equal)
+                    let mmr_a =
+                        self.compute_mmr(**idx_a, original_scores[**idx_a], &selected, &token_sets);
+                    let mmr_b =
+                        self.compute_mmr(**idx_b, original_scores[**idx_b], &selected, &token_sets);
+                    mmr_a
+                        .partial_cmp(&mmr_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
             if let Some((best_pos, best_idx)) = best {
                 // Update the score to the MMR value for transparency
-                let mmr_score = self.compute_mmr(*best_idx, original_scores[*best_idx], &selected, &token_sets);
+                let mmr_score = self.compute_mmr(
+                    *best_idx,
+                    original_scores[*best_idx],
+                    &selected,
+                    &token_sets,
+                );
                 chunks[*best_idx].score = mmr_score;
                 selected.push(remaining.remove(best_pos));
             }
         }
 
         // Reorder chunks by selection order
-        let mut reordered: Vec<MemoryChunk> = selected.into_iter().map(|i| chunks[i].clone()).collect();
+        let mut reordered: Vec<MemoryChunk> =
+            selected.into_iter().map(|i| chunks[i].clone()).collect();
         chunks.swap_with_slice(&mut reordered);
     }
 
@@ -182,7 +188,9 @@ impl MmrReranker {
         } else {
             selected
                 .iter()
-                .map(|&sel_idx| jaccard_similarity(&token_sets[candidate_idx], &token_sets[sel_idx]))
+                .map(|&sel_idx| {
+                    jaccard_similarity(&token_sets[candidate_idx], &token_sets[sel_idx])
+                })
                 .fold(0.0_f64, f64::max)
         };
 
@@ -329,8 +337,14 @@ mod tests {
 
     #[test]
     fn test_jaccard_similarity() {
-        let a: HashSet<String> = ["apple", "banana", "cherry"].iter().map(|s| s.to_string()).collect();
-        let b: HashSet<String> = ["banana", "cherry", "date"].iter().map(|s| s.to_string()).collect();
+        let a: HashSet<String> = ["apple", "banana", "cherry"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let b: HashSet<String> = ["banana", "cherry", "date"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
         // Intersection: banana, cherry (2)
         // Union: apple, banana, cherry, date (4)
@@ -373,8 +387,20 @@ mod tests {
     fn test_mmr_diverse_results() {
         // Two very different chunks with same relevance
         let mut chunks = vec![
-            MemoryChunk::new("a.md".to_string(), 1, 1, "apple banana cherry".to_string(), 0.9),
-            MemoryChunk::new("b.md".to_string(), 1, 1, "xray yacht zebra".to_string(), 0.9),
+            MemoryChunk::new(
+                "a.md".to_string(),
+                1,
+                1,
+                "apple banana cherry".to_string(),
+                0.9,
+            ),
+            MemoryChunk::new(
+                "b.md".to_string(),
+                1,
+                1,
+                "xray yacht zebra".to_string(),
+                0.9,
+            ),
         ];
 
         apply_mmr(&mut chunks);
@@ -391,9 +417,27 @@ mod tests {
     fn test_mmr_similar_penalized() {
         // High relevance similar vs lower relevance diverse
         let mut chunks = vec![
-            MemoryChunk::new("similar1.md".to_string(), 1, 1, "apple banana".to_string(), 1.0),
-            MemoryChunk::new("similar2.md".to_string(), 1, 1, "apple banana cherry".to_string(), 0.95),
-            MemoryChunk::new("diverse.md".to_string(), 1, 1, "xray yacht zebra".to_string(), 0.8),
+            MemoryChunk::new(
+                "similar1.md".to_string(),
+                1,
+                1,
+                "apple banana".to_string(),
+                1.0,
+            ),
+            MemoryChunk::new(
+                "similar2.md".to_string(),
+                1,
+                1,
+                "apple banana cherry".to_string(),
+                0.95,
+            ),
+            MemoryChunk::new(
+                "diverse.md".to_string(),
+                1,
+                1,
+                "xray yacht zebra".to_string(),
+                0.8,
+            ),
         ];
 
         apply_mmr(&mut chunks);
@@ -406,7 +450,10 @@ mod tests {
         let similar2_pos = chunks.iter().position(|c| c.file == "similar2.md").unwrap();
 
         // Diverse should come before the similar duplicate
-        assert!(diverse_pos < similar2_pos, "Diverse result should rank higher than similar duplicate");
+        assert!(
+            diverse_pos < similar2_pos,
+            "Diverse result should rank higher than similar duplicate"
+        );
     }
 
     #[test]
@@ -423,7 +470,13 @@ mod tests {
         // Reset and test lambda = 0.0: pure diversity (but identical content here)
         let mut chunks2 = vec![
             MemoryChunk::new("high.md".to_string(), 1, 1, "unique alpha".to_string(), 1.0),
-            MemoryChunk::new("low.md".to_string(), 1, 1, "different beta".to_string(), 0.5),
+            MemoryChunk::new(
+                "low.md".to_string(),
+                1,
+                1,
+                "different beta".to_string(),
+                0.5,
+            ),
         ];
 
         // With lambda=0, it's purely about diversity

@@ -14,6 +14,7 @@ use super::GenChannels;
 use super::audio::{self, SpatialAudioListener};
 use super::behaviors::{self, BehaviorState, EntityBehaviors};
 use super::commands::*;
+use super::compat;
 use super::registry::*;
 
 /// Bevy resource holding the workspace path for default export locations.
@@ -197,6 +198,7 @@ fn setup_default_scene(
             Name::new("ground_plane"),
             GenEntity {
                 entity_type: GenEntityType::Primitive,
+                world_id: None,
             },
         ))
         .id();
@@ -212,6 +214,7 @@ fn setup_default_scene(
             SpatialAudioListener,
             GenEntity {
                 entity_type: GenEntityType::Camera,
+                world_id: None,
             },
         ))
         .id();
@@ -230,6 +233,7 @@ fn setup_default_scene(
             Name::new("main_light"),
             GenEntity {
                 entity_type: GenEntityType::Light,
+                world_id: None,
             },
         ))
         .id();
@@ -283,6 +287,7 @@ struct GenCommandParams<'w, 's> {
     material_handles: Query<'w, 's, &'static MeshMaterial3d<StandardMaterial>>,
     mesh_handles: Query<'w, 's, &'static Mesh3d>,
     behaviors_query: Query<'w, 's, &'static mut EntityBehaviors>,
+    parametric_shapes: Query<'w, 's, &'static ParametricShape>,
     clear_color: Option<Res<'w, ClearColor>>,
     ambient_light: Option<Res<'w, GlobalAmbientLight>>,
     pending_world: ResMut<'w, PendingWorldSetup>,
@@ -488,6 +493,7 @@ fn process_gen_commands(
                     &params.meshes,
                     &params.audio_engine,
                     &params.behaviors_query,
+                    &params.parametric_shapes,
                     &env_data,
                     params.avatar_config.active.as_ref(),
                     &params.world_tours.tours,
@@ -515,11 +521,21 @@ fn process_gen_commands(
                 );
                 match result {
                     Ok(world_load) => {
-                        // Queue the glTF scene load (async — entities appear later)
-                        if let Some(scene_path) = world_load.scene_path
+                        if !world_load.world_entities.is_empty() {
+                            // RON format — spawn entities directly from WorldEntity data
+                            spawn_world_entities(
+                                &world_load.world_entities,
+                                &mut commands,
+                                &mut params.meshes,
+                                &mut params.materials,
+                                &mut params.registry,
+                                &mut params.behavior_state,
+                            );
+                        } else if let Some(scene_path) = world_load.scene_path
                             && let Some(resolved) =
                                 resolve_gltf_path(&scene_path, &params.workspace.path)
                         {
+                            // Legacy format — queue glTF scene load (async)
                             let asset_path = resolved
                                 .to_string_lossy()
                                 .trim_start_matches('/')
@@ -535,8 +551,7 @@ fn process_gen_commands(
                             });
                         }
 
-                        // Defer behaviors and emitters — entities from glTF
-                        // won't exist until the scene spawner runs (1-2 frames).
+                        // Legacy: defer behaviors and emitters for glTF entities
                         if !world_load.behaviors.is_empty() || !world_load.emitters.is_empty() {
                             params.pending_world.active = Some(WorldSetupData {
                                 behaviors: world_load.behaviors.clone(),
@@ -548,6 +563,16 @@ fn process_gen_commands(
                         // Ambience doesn't reference entities — apply immediately.
                         if let Some(ambience) = world_load.ambience {
                             audio::handle_set_ambience(ambience, &mut params.audio_engine);
+                        }
+
+                        // Audio emitters from RON format (already extracted by world.rs)
+                        for emitter_cmd in &world_load.emitters {
+                            audio::handle_spawn_audio_emitter(
+                                emitter_cmd.clone(),
+                                &mut params.audio_engine,
+                                &mut commands,
+                                &params.registry,
+                            );
                         }
 
                         // Environment and camera don't depend on scene entities.
@@ -723,6 +748,7 @@ fn process_pending_world_setup(
             registry.insert(name_str.to_string(), entity);
             commands.entity(entity).insert(GenEntity {
                 entity_type: GenEntityType::Mesh,
+                world_id: None,
             });
             found_count += 1;
         }
@@ -991,6 +1017,11 @@ fn handle_spawn_primitive(
         scale: Vec3::from_array(cmd.scale),
     };
 
+    // Store the parametric shape so it survives save/load cycles.
+    let parametric = ParametricShape {
+        shape: compat::shape_from_primitive(cmd.shape, &cmd.dimensions),
+    };
+
     let entity = commands
         .spawn((
             Mesh3d(mesh),
@@ -999,7 +1030,9 @@ fn handle_spawn_primitive(
             Name::new(cmd.name.clone()),
             GenEntity {
                 entity_type: GenEntityType::Primitive,
+                world_id: None,
             },
+            parametric,
         ))
         .id();
 
@@ -1190,6 +1223,7 @@ fn handle_set_light(
                     Name::new(cmd.name.clone()),
                     GenEntity {
                         entity_type: GenEntityType::Light,
+                        world_id: None,
                     },
                 ))
                 .id()
@@ -1208,6 +1242,7 @@ fn handle_set_light(
                     Name::new(cmd.name.clone()),
                     GenEntity {
                         entity_type: GenEntityType::Light,
+                        world_id: None,
                     },
                 ))
                 .id()
@@ -1229,6 +1264,7 @@ fn handle_set_light(
                     Name::new(cmd.name.clone()),
                     GenEntity {
                         entity_type: GenEntityType::Light,
+                        world_id: None,
                     },
                 ))
                 .id()
@@ -1314,6 +1350,7 @@ fn handle_spawn_mesh(
             Name::new(cmd.name.clone()),
             GenEntity {
                 entity_type: GenEntityType::Mesh,
+                world_id: None,
             },
         ))
         .id();
@@ -1324,6 +1361,299 @@ fn handle_spawn_mesh(
     GenResponse::Spawned {
         name: cmd.name,
         entity_id,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spawn world entities from RON WorldManifest
+// ---------------------------------------------------------------------------
+
+use localgpt_world_types as wt;
+
+/// Spawn all entities from a loaded RON `WorldManifest`.
+///
+/// Creates Bevy ECS entities from `WorldEntity` definitions, preserving:
+/// - Parametric shapes (via `ParametricShape` component)
+/// - Materials (via `StandardMaterial`)
+/// - Lights (directional / point / spot)
+/// - Behaviors (attached after spawn)
+/// - Parent-child relationships (resolved after all entities are spawned)
+fn spawn_world_entities(
+    world_entities: &[wt::WorldEntity],
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    registry: &mut ResMut<NameRegistry>,
+    behavior_state: &mut BehaviorState,
+) {
+    // First pass: collect world_id → entity name for parent resolution
+    let id_to_name: std::collections::HashMap<u64, String> = world_entities
+        .iter()
+        .map(|we| (we.id.0, we.name.as_str().to_string()))
+        .collect();
+
+    // Deferred parent assignments (child_name, parent_name)
+    let mut parent_assignments: Vec<(String, String)> = Vec::new();
+
+    for we in world_entities {
+        let name = we.name.as_str().to_string();
+
+        // Skip if already exists
+        if registry.contains_name(&name) {
+            tracing::warn!("Entity '{}' already exists, skipping", name);
+            continue;
+        }
+
+        let transform = Transform {
+            translation: Vec3::from_array(we.transform.position),
+            rotation: Quat::from_euler(
+                EulerRot::XYZ,
+                we.transform.rotation_degrees[0].to_radians(),
+                we.transform.rotation_degrees[1].to_radians(),
+                we.transform.rotation_degrees[2].to_radians(),
+            ),
+            scale: Vec3::from_array(we.transform.scale),
+        };
+
+        let world_id = Some(wt::EntityId(we.id.0));
+
+        // Determine what kind of entity to spawn based on component slots
+        let bevy_entity = if let Some(ref shape) = we.shape {
+            // Entity with a parametric shape → spawn mesh
+            let mesh_handle = shape_to_mesh(shape, meshes);
+            let mat = we.material.as_ref().cloned().unwrap_or_default();
+            let material_handle = materials.add(StandardMaterial {
+                base_color: Color::srgba(mat.color[0], mat.color[1], mat.color[2], mat.color[3]),
+                metallic: mat.metallic,
+                perceptual_roughness: mat.roughness,
+                emissive: bevy::color::LinearRgba::new(
+                    mat.emissive[0],
+                    mat.emissive[1],
+                    mat.emissive[2],
+                    mat.emissive[3],
+                ),
+                ..default()
+            });
+
+            let parametric = ParametricShape {
+                shape: shape.clone(),
+            };
+
+            let mut entity_cmd = commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(material_handle),
+                transform,
+                Name::new(name.clone()),
+                GenEntity {
+                    entity_type: GenEntityType::Primitive,
+                    world_id,
+                },
+                parametric,
+            ));
+
+            if !we.transform.visible {
+                entity_cmd.insert(Visibility::Hidden);
+            }
+
+            // If entity also has a light, add it as a child or additional component
+            if let Some(ref light) = we.light {
+                insert_light_component(&mut entity_cmd, light);
+            }
+
+            entity_cmd.id()
+        } else if let Some(ref light) = we.light {
+            // Light-only entity (no shape)
+            spawn_light_entity(light, &name, transform, world_id, commands)
+        } else {
+            // Empty entity (group, audio-only, etc.)
+            commands
+                .spawn((
+                    transform,
+                    Name::new(name.clone()),
+                    GenEntity {
+                        entity_type: GenEntityType::Group,
+                        world_id,
+                    },
+                ))
+                .id()
+        };
+
+        registry.insert(name.clone(), bevy_entity);
+
+        // Attach behaviors
+        if !we.behaviors.is_empty() {
+            let mut behavior_instances: Vec<behaviors::BehaviorInstance> = Vec::new();
+            for wt_behavior in &we.behaviors {
+                let cmd_behavior: BehaviorDef = wt_behavior.into();
+                behavior_instances.push(behaviors::BehaviorInstance {
+                    id: behavior_state.next_id(),
+                    def: cmd_behavior,
+                    base_position: transform.translation,
+                    base_scale: transform.scale,
+                });
+            }
+            commands
+                .entity(bevy_entity)
+                .insert(behaviors::EntityBehaviors {
+                    behaviors: behavior_instances,
+                });
+        }
+
+        // Record deferred parent assignment
+        if let Some(ref parent_id) = we.parent
+            && let Some(parent_name) = id_to_name.get(&parent_id.0)
+        {
+            parent_assignments.push((name, parent_name.clone()));
+        }
+    }
+
+    // Second pass: resolve parent-child relationships
+    for (child_name, parent_name) in &parent_assignments {
+        if let (Some(child), Some(parent)) = (
+            registry.get_entity(child_name),
+            registry.get_entity(parent_name),
+        ) {
+            commands.entity(child).set_parent_in_place(parent);
+        }
+    }
+}
+
+/// Convert a `wt::Shape` to a Bevy `Mesh` handle.
+fn shape_to_mesh(shape: &wt::Shape, meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
+    match shape {
+        wt::Shape::Cuboid { x, y, z } => meshes.add(Cuboid::new(*x, *y, *z)),
+        wt::Shape::Sphere { radius } => meshes.add(Sphere::new(*radius).mesh().uv(32, 18)),
+        wt::Shape::Cylinder { radius, height } => meshes.add(Cylinder::new(*radius, *height)),
+        wt::Shape::Cone { radius, height } => meshes.add(Cone {
+            radius: *radius,
+            height: *height,
+        }),
+        wt::Shape::Capsule {
+            radius,
+            half_length,
+        } => meshes.add(Capsule3d::new(*radius, *half_length * 2.0)),
+        wt::Shape::Torus {
+            major_radius,
+            minor_radius,
+        } => meshes.add(Torus::new(*minor_radius, *major_radius)),
+        wt::Shape::Plane { x, z } => {
+            meshes.add(Plane3d::new(Vec3::Y, Vec2::new(*x / 2.0, *z / 2.0)))
+        }
+    }
+}
+
+/// Insert a light component onto an existing entity command builder.
+fn insert_light_component(
+    entity_cmd: &mut bevy::ecs::system::EntityCommands,
+    light: &wt::LightDef,
+) {
+    let color = Color::srgba(
+        light.color[0],
+        light.color[1],
+        light.color[2],
+        light.color[3],
+    );
+    match light.light_type {
+        wt::LightType::Directional => {
+            entity_cmd.insert(DirectionalLight {
+                illuminance: light.intensity,
+                shadows_enabled: light.shadows,
+                color,
+                ..default()
+            });
+        }
+        wt::LightType::Point => {
+            entity_cmd.insert(PointLight {
+                intensity: light.intensity,
+                shadows_enabled: light.shadows,
+                color,
+                ..default()
+            });
+        }
+        wt::LightType::Spot => {
+            entity_cmd.insert(SpotLight {
+                intensity: light.intensity,
+                shadows_enabled: light.shadows,
+                color,
+                ..default()
+            });
+        }
+    }
+}
+
+/// Spawn a standalone light entity (no shape).
+fn spawn_light_entity(
+    light: &wt::LightDef,
+    name: &str,
+    transform: Transform,
+    world_id: Option<wt::EntityId>,
+    commands: &mut Commands,
+) -> bevy::ecs::entity::Entity {
+    let color = Color::srgba(
+        light.color[0],
+        light.color[1],
+        light.color[2],
+        light.color[3],
+    );
+    match light.light_type {
+        wt::LightType::Directional => {
+            let dir = light.direction.unwrap_or([0.0, -1.0, -0.5]);
+            let light_transform = Transform::from_translation(transform.translation)
+                .looking_at(transform.translation + Vec3::from_array(dir), Vec3::Y);
+            commands
+                .spawn((
+                    DirectionalLight {
+                        illuminance: light.intensity,
+                        shadows_enabled: light.shadows,
+                        color,
+                        ..default()
+                    },
+                    light_transform,
+                    Name::new(name.to_string()),
+                    GenEntity {
+                        entity_type: GenEntityType::Light,
+                        world_id,
+                    },
+                ))
+                .id()
+        }
+        wt::LightType::Point => commands
+            .spawn((
+                PointLight {
+                    intensity: light.intensity,
+                    shadows_enabled: light.shadows,
+                    color,
+                    ..default()
+                },
+                transform,
+                Name::new(name.to_string()),
+                GenEntity {
+                    entity_type: GenEntityType::Light,
+                    world_id,
+                },
+            ))
+            .id(),
+        wt::LightType::Spot => {
+            let dir = light.direction.unwrap_or([0.0, -1.0, 0.0]);
+            let light_transform = Transform::from_translation(transform.translation)
+                .looking_at(transform.translation + Vec3::from_array(dir), Vec3::Y);
+            commands
+                .spawn((
+                    SpotLight {
+                        intensity: light.intensity,
+                        shadows_enabled: light.shadows,
+                        color,
+                        ..default()
+                    },
+                    light_transform,
+                    Name::new(name.to_string()),
+                    GenEntity {
+                        entity_type: GenEntityType::Light,
+                        world_id,
+                    },
+                ))
+                .id()
+        }
     }
 }
 

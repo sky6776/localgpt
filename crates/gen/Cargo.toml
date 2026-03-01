@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 localgpt-core = { workspace = true }
+localgpt-world-types = { workspace = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -46,3 +47,4 @@ cpal = "0.17"
 
 # World skill serialization
 toml = "0.8"
+ron = "0.9"

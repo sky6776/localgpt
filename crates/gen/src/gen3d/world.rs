@@ -1,41 +1,59 @@
 //! World skill save/load — serialize scenes as complete skill directories.
 //!
-//! A world skill directory contains:
-//! - `SKILL.md`       — Skill metadata + description
-//! - `world.toml`     — Manifest tying everything together
-//! - `scene.glb`      — glTF geometry & materials
-//! - `behaviors.toml` — Declarative behavior definitions
-//! - `audio.toml`     — Ambience + spatial audio emitters
-//! - `tours.toml`     — Guided tours (optional)
+//! ## New format (v1 — RON)
+//!
+//! ```text
+//! world-name/
+//!   SKILL.md       — Skill metadata + description
+//!   world.ron      — WorldManifest with inline entities (parametric shapes preserved)
+//!   scene.glb      — Optional glTF export (for external viewers)
+//! ```
+//!
+//! ## Legacy format (v0 — TOML + glTF)
+//!
+//! ```text
+//! world-name/
+//!   SKILL.md       — Skill metadata
+//!   world.toml     — Manifest referencing sidecar files
+//!   scene.glb      — Geometry & materials (parametric info lost)
+//!   behaviors.toml — Behavior definitions
+//!   audio.toml     — Ambience + emitters
+//!   tours.toml     — Guided tours
+//! ```
+//!
+//! The loader auto-detects format: `world.ron` → new, `world.toml` → legacy.
 
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use localgpt_world_types as wt;
+
 use super::audio::AudioEngine;
-use super::behaviors::{self, BehaviorState, EntityBehaviors};
+use super::behaviors::{BehaviorState, EntityBehaviors};
 use super::commands::*;
+use super::compat;
 use super::plugin::GenWorkspace;
 use super::registry::*;
 
 // ---------------------------------------------------------------------------
-// TOML data structures
+// Legacy TOML data structures (kept for backward-compatible loading)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, Deserialize)]
-struct WorldManifest {
-    world: WorldMeta,
+struct LegacyManifest {
+    world: LegacyMeta,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    environment: Option<EnvironmentDef>,
+    environment: Option<LegacyEnvironment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    camera: Option<CameraDef>,
+    camera: Option<LegacyCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     avatar: Option<AvatarDef>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct WorldMeta {
+struct LegacyMeta {
     name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
@@ -63,7 +81,7 @@ fn default_tours_file() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct EnvironmentDef {
+struct LegacyEnvironment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     background_color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,7 +91,7 @@ struct EnvironmentDef {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct CameraDef {
+struct LegacyCamera {
     position: [f32; 3],
     look_at: [f32; 3],
     #[serde(default = "default_fov")]
@@ -85,35 +103,35 @@ fn default_fov() -> f32 {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct BehaviorsFile {
+struct LegacyBehaviorsFile {
     #[serde(default)]
-    behaviors: Vec<BehaviorEntry>,
+    behaviors: Vec<LegacyBehaviorEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct BehaviorEntry {
+struct LegacyBehaviorEntry {
     entity: String,
     #[serde(flatten)]
     behavior: BehaviorDef,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct AudioFile {
+struct LegacyAudioFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ambience: Option<AmbienceDef>,
+    ambience: Option<LegacyAmbienceDef>,
     #[serde(default)]
     emitters: Vec<AudioEmitterCmd>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct AmbienceDef {
+struct LegacyAmbienceDef {
     layers: Vec<AmbienceLayerDef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     master_volume: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ToursFile {
+struct LegacyToursFile {
     #[serde(default)]
     tours: Vec<TourDef>,
 }
@@ -129,7 +147,7 @@ pub struct EnvironmentSnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// Save world
+// Save world (new RON format)
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
@@ -146,6 +164,7 @@ pub fn handle_save_world(
     mesh_assets: &Assets<Mesh>,
     audio_engine: &AudioEngine,
     behaviors_query: &Query<&mut EntityBehaviors>,
+    parametric_shapes: &Query<&ParametricShape>,
     env_snapshot: &EnvironmentSnapshot,
     avatar: Option<&AvatarDef>,
     tours: &[TourDef],
@@ -163,9 +182,179 @@ pub fn handle_save_world(
         };
     }
 
-    // 1. Export scene.glb
+    // Collect all entities into WorldEntity objects
+    let mut world_entities: Vec<wt::WorldEntity> = Vec::new();
+    let mut next_id: u64 = 1;
+
+    for (name, bevy_entity) in registry.all_names() {
+        // Skip infrastructure entities (camera, default scene objects)
+        let Some(gen_ent) = gen_entities.get(bevy_entity).ok() else {
+            continue;
+        };
+
+        // Skip camera — stored separately
+        if gen_ent.entity_type == GenEntityType::Camera {
+            continue;
+        }
+
+        let entity_id = gen_ent.world_id.unwrap_or_else(|| {
+            let id = wt::EntityId(next_id);
+            next_id += 1;
+            id
+        });
+        if entity_id.0 >= next_id {
+            next_id = entity_id.0 + 1;
+        }
+
+        let transform = transforms.get(bevy_entity).copied().unwrap_or_default();
+        let euler = transform.rotation.to_euler(EulerRot::XYZ);
+
+        let mut we = wt::WorldEntity::new(entity_id.0, name);
+        we.transform = wt::WorldTransform {
+            position: transform.translation.to_array(),
+            rotation_degrees: [
+                euler.0.to_degrees(),
+                euler.1.to_degrees(),
+                euler.2.to_degrees(),
+            ],
+            scale: transform.scale.to_array(),
+            visible: true,
+        };
+
+        // Parent
+        if let Ok(child_of) = parent_query.get(bevy_entity)
+            && let Some(parent_name) = registry.get_name(child_of.parent())
+            && let Some(parent_bevy) = registry.get_entity(parent_name)
+            && let Ok(parent_gen) = gen_entities.get(parent_bevy)
+        {
+            we.parent = parent_gen.world_id;
+        }
+
+        // Shape (from ParametricShape component — preserves dimensions!)
+        if let Ok(param) = parametric_shapes.get(bevy_entity) {
+            we.shape = Some(param.shape.clone());
+        }
+
+        // Material
+        if let Ok(mat_handle) = material_handles.get(bevy_entity)
+            && let Some(mat) = material_assets.get(&mat_handle.0)
+        {
+            let c = mat.base_color.to_srgba();
+            let e = mat.emissive;
+            we.material = Some(wt::MaterialDef {
+                color: [c.red, c.green, c.blue, c.alpha],
+                metallic: mat.metallic,
+                roughness: mat.perceptual_roughness,
+                emissive: [e.red, e.green, e.blue, e.alpha],
+            });
+        }
+
+        // Light
+        // (Lights are separate entities in the current architecture.
+        //  We store them as entities with a LightDef component.)
+        // For now, light data is inferred from GenEntityType::Light
+        // and is not yet stored as a wt::LightDef.
+
+        // Behaviors
+        if let Ok(eb) = behaviors_query.get(bevy_entity) {
+            for inst in &eb.behaviors {
+                we.behaviors.push((&inst.def).into());
+            }
+        }
+
+        // Audio emitter (check if this entity has audio attached)
+        // Audio emitters are tracked in AudioEngine.emitter_meta by name.
+        if let Some(meta) = audio_engine.emitter_meta.get(name) {
+            let source: wt::AudioSource = (&meta.sound).into();
+            we.audio = Some(wt::AudioDef {
+                kind: wt::AudioKind::Sfx,
+                source,
+                volume: meta.base_volume,
+                radius: Some(meta.radius),
+                rolloff: wt::Rolloff::InverseSquare,
+            });
+        }
+
+        world_entities.push(we);
+    }
+
+    // Collect ambient audio as root-level entities
+    if let Some(ref ambience_cmd) = audio_engine.last_ambience {
+        for layer in &ambience_cmd.layers {
+            let source: wt::AudioSource = (&layer.sound).into();
+            let mut we = wt::WorldEntity::new(next_id, format!("ambience_{}", layer.name));
+            next_id += 1;
+            we.audio = Some(wt::AudioDef {
+                kind: wt::AudioKind::Ambient,
+                source,
+                volume: layer.volume,
+                radius: None, // global
+                rolloff: wt::Rolloff::InverseSquare,
+            });
+            world_entities.push(we);
+        }
+    }
+
+    // Camera
+    let camera_def = registry.get_entity("main_camera").and_then(|e| {
+        transforms.get(e).ok().map(|t| {
+            let forward = t.forward().as_vec3();
+            let look_at = t.translation + forward * 10.0;
+            wt::CameraDef {
+                position: t.translation.to_array(),
+                look_at: look_at.to_array(),
+                fov_degrees: 45.0,
+            }
+        })
+    });
+
+    // Environment
+    let environment =
+        if env_snapshot.background_color.is_some() || env_snapshot.ambient_intensity.is_some() {
+            Some(wt::EnvironmentDef {
+                background_color: env_snapshot.background_color,
+                ambient_intensity: env_snapshot.ambient_intensity,
+                ambient_color: env_snapshot.ambient_color,
+                fog_density: None,
+                fog_color: None,
+            })
+        } else {
+            None
+        };
+
+    // Build the manifest
+    let manifest = wt::WorldManifest {
+        version: 1,
+        meta: wt::WorldMeta {
+            name: cmd.name.clone(),
+            description: cmd.description.clone(),
+            biome: None,
+            time_of_day: None,
+        },
+        environment,
+        camera: camera_def,
+        avatar: avatar.map(|a| a.into()),
+        tours: tours.iter().map(|t| t.into()).collect(),
+        entities: world_entities,
+        creations: Vec::new(),
+        next_entity_id: next_id,
+    };
+
+    // Write world.ron
+    let ron_str = ron::ser::to_string_pretty(&manifest, ron::ser::PrettyConfig::default())
+        .unwrap_or_else(|e| {
+            tracing::error!("RON serialization failed: {}", e);
+            String::new()
+        });
+    if let Err(e) = std::fs::write(skill_dir.join("world.ron"), &ron_str) {
+        return GenResponse::Error {
+            message: format!("Failed to write world.ron: {}", e),
+        };
+    }
+
+    // Also export scene.glb as a backup / for external viewers
     let scene_path = skill_dir.join("scene.glb");
-    let glb_result = export_scene_glb(
+    if let Err(e) = export_scene_glb(
         &scene_path,
         registry,
         transforms,
@@ -175,100 +364,12 @@ pub fn handle_save_world(
         material_assets,
         mesh_handles,
         mesh_assets,
-    );
-    if let Err(e) = glb_result {
-        return GenResponse::Error {
-            message: format!("Failed to export scene: {}", e),
-        };
+    ) {
+        // Non-fatal — the RON file is the primary save
+        tracing::warn!("glTF export failed (non-fatal): {}", e);
     }
 
-    // 2. Write behaviors.toml
-    let all_behaviors = behaviors::collect_all_behaviors(registry, behaviors_query);
-    let behaviors_file = BehaviorsFile {
-        behaviors: all_behaviors
-            .iter()
-            .flat_map(|(entity, defs)| {
-                defs.iter().map(move |def| BehaviorEntry {
-                    entity: entity.clone(),
-                    behavior: def.clone(),
-                })
-            })
-            .collect(),
-    };
-    let behaviors_toml = toml::to_string_pretty(&behaviors_file).unwrap_or_else(|_| String::new());
-    if let Err(e) = std::fs::write(skill_dir.join("behaviors.toml"), &behaviors_toml) {
-        return GenResponse::Error {
-            message: format!("Failed to write behaviors.toml: {}", e),
-        };
-    }
-
-    // 3. Write audio.toml
-    let audio_file = collect_audio_state(audio_engine);
-    let audio_toml = toml::to_string_pretty(&audio_file).unwrap_or_else(|_| String::new());
-    if let Err(e) = std::fs::write(skill_dir.join("audio.toml"), &audio_toml) {
-        return GenResponse::Error {
-            message: format!("Failed to write audio.toml: {}", e),
-        };
-    }
-
-    // 4. Gather camera info
-    let camera_def = registry.get_entity("main_camera").and_then(|e| {
-        transforms.get(e).ok().map(|t| {
-            let forward = t.forward().as_vec3();
-            let look_at = t.translation + forward * 10.0;
-            CameraDef {
-                position: t.translation.to_array(),
-                look_at: look_at.to_array(),
-                fov_degrees: 45.0,
-            }
-        })
-    });
-
-    // 5. Write world.toml
-    let manifest = WorldManifest {
-        world: WorldMeta {
-            name: cmd.name.clone(),
-            description: cmd.description.clone(),
-            scene: "scene.glb".to_string(),
-            behaviors: "behaviors.toml".to_string(),
-            audio: "audio.toml".to_string(),
-            tours: "tours.toml".to_string(),
-        },
-        environment: if env_snapshot.background_color.is_some()
-            || env_snapshot.ambient_intensity.is_some()
-        {
-            Some(EnvironmentDef {
-                background_color: env_snapshot.background_color,
-                ambient_intensity: env_snapshot.ambient_intensity,
-                ambient_color: env_snapshot.ambient_color,
-            })
-        } else {
-            None
-        },
-        camera: camera_def,
-        avatar: avatar.cloned(),
-    };
-    let manifest_toml = toml::to_string_pretty(&manifest).unwrap_or_else(|_| String::new());
-    if let Err(e) = std::fs::write(skill_dir.join("world.toml"), &manifest_toml) {
-        return GenResponse::Error {
-            message: format!("Failed to write world.toml: {}", e),
-        };
-    }
-
-    // 6. Write tours.toml (only if tours exist)
-    if !tours.is_empty() {
-        let tours_file = ToursFile {
-            tours: tours.to_vec(),
-        };
-        let tours_toml = toml::to_string_pretty(&tours_file).unwrap_or_else(|_| String::new());
-        if let Err(e) = std::fs::write(skill_dir.join("tours.toml"), &tours_toml) {
-            return GenResponse::Error {
-                message: format!("Failed to write tours.toml: {}", e),
-            };
-        }
-    }
-
-    // 7. Write SKILL.md
+    // Write SKILL.md
     let description = cmd.description.as_deref().unwrap_or("A generated 3D world");
     let skill_md = format!(
         r#"---
@@ -303,13 +404,17 @@ behaviors, audio, avatar, and tours.
 }
 
 // ---------------------------------------------------------------------------
-// Load world
+// Load world (auto-detects RON vs legacy TOML)
 // ---------------------------------------------------------------------------
 
 /// Result of parsing a world skill directory (returned to plugin.rs for ECS application).
 pub struct WorldLoadResult {
     pub world_path: String,
+    /// glTF scene path (legacy format only).
     pub scene_path: Option<String>,
+    /// Entities to spawn directly (RON format — no glTF needed).
+    pub world_entities: Vec<wt::WorldEntity>,
+    /// Behaviors grouped by entity name (legacy format).
     pub behaviors: Vec<(String, Vec<BehaviorDef>)>,
     pub ambience: Option<AmbienceCmd>,
     pub emitters: Vec<AudioEmitterCmd>,
@@ -329,11 +434,113 @@ pub fn handle_load_world(
     let world_dir = resolve_world_path(path, &workspace.path)
         .ok_or_else(|| format!("World skill not found: {}", path))?;
 
-    // Read world.toml
-    let manifest_path = world_dir.join("world.toml");
-    let manifest_str = std::fs::read_to_string(&manifest_path)
+    // Try RON format first, fall back to legacy TOML
+    let ron_path = world_dir.join("world.ron");
+    if ron_path.exists() {
+        load_ron_world(&world_dir, &ron_path)
+    } else {
+        let toml_path = world_dir.join("world.toml");
+        load_legacy_world(&world_dir, &toml_path)
+    }
+}
+
+/// Load a world from the new RON format.
+fn load_ron_world(world_dir: &Path, ron_path: &Path) -> Result<WorldLoadResult, String> {
+    let ron_str = std::fs::read_to_string(ron_path)
+        .map_err(|e| format!("Failed to read world.ron: {}", e))?;
+    let manifest: wt::WorldManifest =
+        ron::from_str(&ron_str).map_err(|e| format!("Failed to parse world.ron: {}", e))?;
+
+    // Extract ambient audio from entities (kind == Ambient, radius == None)
+    let mut ambience_layers: Vec<AmbienceLayerDef> = Vec::new();
+    let mut emitters: Vec<AudioEmitterCmd> = Vec::new();
+    let mut scene_entities: Vec<wt::WorldEntity> = Vec::new();
+
+    for entity in &manifest.entities {
+        if let Some(ref audio) = entity.audio {
+            if audio.kind == wt::AudioKind::Ambient && audio.radius.is_none() {
+                // This is an ambient layer — extract to legacy format for audio engine
+                if let Some(ambient_sound) = compat::audio_source_to_ambient(&audio.source) {
+                    ambience_layers.push(AmbienceLayerDef {
+                        name: entity
+                            .name
+                            .as_str()
+                            .strip_prefix("ambience_")
+                            .unwrap_or(entity.name.as_str())
+                            .to_string(),
+                        sound: ambient_sound,
+                        volume: audio.volume,
+                    });
+                }
+                // Don't include ambient-only entities in scene spawn
+                if entity.shape.is_none() && entity.light.is_none() {
+                    continue;
+                }
+            } else if let Some(emitter_sound) = compat::audio_source_to_emitter(&audio.source) {
+                // Spatial emitter
+                emitters.push(AudioEmitterCmd {
+                    name: entity.name.as_str().to_string(),
+                    entity: Some(entity.name.as_str().to_string()),
+                    position: Some(entity.transform.position),
+                    sound: emitter_sound,
+                    radius: audio.radius.unwrap_or(20.0),
+                    volume: audio.volume,
+                });
+            }
+        }
+        scene_entities.push(entity.clone());
+    }
+
+    // Count behaviors across all entities
+    let behavior_count: usize = scene_entities.iter().map(|e| e.behaviors.len()).sum();
+
+    let ambience = if ambience_layers.is_empty() {
+        None
+    } else {
+        Some(AmbienceCmd {
+            layers: ambience_layers,
+            master_volume: None,
+            reverb: None,
+        })
+    };
+
+    let environment = manifest.environment.as_ref().map(|e| EnvironmentCmd {
+        background_color: e.background_color,
+        ambient_light: e.ambient_intensity,
+        ambient_color: e.ambient_color,
+    });
+
+    let camera = manifest.camera.as_ref().map(|c| CameraCmd {
+        position: c.position,
+        look_at: c.look_at,
+        fov_degrees: c.fov_degrees,
+    });
+
+    let avatar = manifest.avatar.as_ref().map(|a| a.into());
+    let tours: Vec<TourDef> = manifest.tours.iter().map(|t| t.into()).collect();
+    let entity_count = scene_entities.len();
+
+    Ok(WorldLoadResult {
+        world_path: world_dir.to_string_lossy().into_owned(),
+        scene_path: None, // No glTF needed — spawn from WorldEntity
+        world_entities: scene_entities,
+        behaviors: Vec::new(), // Behaviors are inline in world_entities
+        ambience,
+        emitters,
+        environment,
+        camera,
+        avatar,
+        tours,
+        entity_count,
+        behavior_count,
+    })
+}
+
+/// Load a world from the legacy TOML + glTF format.
+fn load_legacy_world(world_dir: &Path, toml_path: &Path) -> Result<WorldLoadResult, String> {
+    let manifest_str = std::fs::read_to_string(toml_path)
         .map_err(|e| format!("Failed to read world.toml: {}", e))?;
-    let manifest: WorldManifest =
+    let manifest: LegacyManifest =
         toml::from_str(&manifest_str).map_err(|e| format!("Failed to parse world.toml: {}", e))?;
 
     // Resolve scene.glb path
@@ -352,10 +559,9 @@ pub fn handle_load_world(
     if behaviors_path.exists() {
         let s = std::fs::read_to_string(&behaviors_path)
             .map_err(|e| format!("Failed to read behaviors.toml: {}", e))?;
-        let file: BehaviorsFile =
+        let file: LegacyBehaviorsFile =
             toml::from_str(&s).map_err(|e| format!("Failed to parse behaviors.toml: {}", e))?;
 
-        // Group by entity
         let mut map: std::collections::HashMap<String, Vec<BehaviorDef>> =
             std::collections::HashMap::new();
         for entry in file.behaviors {
@@ -371,7 +577,7 @@ pub fn handle_load_world(
     if audio_path.exists() {
         let s = std::fs::read_to_string(&audio_path)
             .map_err(|e| format!("Failed to read audio.toml: {}", e))?;
-        let audio_file: AudioFile =
+        let audio_file: LegacyAudioFile =
             toml::from_str(&s).map_err(|e| format!("Failed to parse audio.toml: {}", e))?;
 
         if let Some(amb) = audio_file.ambience {
@@ -384,21 +590,18 @@ pub fn handle_load_world(
         emitters = audio_file.emitters;
     }
 
-    // Environment
     let environment = manifest.environment.map(|env| EnvironmentCmd {
         background_color: env.background_color,
         ambient_light: env.ambient_intensity,
         ambient_color: env.ambient_color,
     });
 
-    // Camera
     let camera = manifest.camera.map(|cam| CameraCmd {
         position: cam.position,
         look_at: cam.look_at,
         fov_degrees: cam.fov_degrees,
     });
 
-    // Avatar
     let avatar = manifest.avatar;
 
     // Read tours.toml
@@ -407,7 +610,7 @@ pub fn handle_load_world(
     if tours_path.exists() {
         let s = std::fs::read_to_string(&tours_path)
             .map_err(|e| format!("Failed to read tours.toml: {}", e))?;
-        let tours_file: ToursFile =
+        let tours_file: LegacyToursFile =
             toml::from_str(&s).map_err(|e| format!("Failed to parse tours.toml: {}", e))?;
         tours = tours_file.tours;
     }
@@ -417,7 +620,8 @@ pub fn handle_load_world(
     Ok(WorldLoadResult {
         world_path: world_dir.to_string_lossy().into_owned(),
         scene_path,
-        entity_count: 0, // Will be counted after scene loads
+        world_entities: Vec::new(), // Legacy — no inline entities
+        entity_count: 0,            // Will be counted after glTF loads
         behavior_count,
         behaviors,
         ambience,
@@ -429,22 +633,21 @@ pub fn handle_load_world(
     })
 }
 
-/// Resolve a world skill path:
-/// 1. As-is (absolute or relative)
-/// 2. {workspace}/skills/{name}
-/// 3. {workspace}/skills/{name}/ (with trailing slash)
+/// Resolve a world skill path. Now checks for both world.ron and world.toml.
 fn resolve_world_path(path: &str, workspace: &Path) -> Option<PathBuf> {
     let expanded = shellexpand::tilde(path).into_owned();
 
     // 1. As-is
     let p = PathBuf::from(&expanded);
-    if p.is_dir() && p.join("world.toml").exists() {
+    if p.is_dir() && (p.join("world.ron").exists() || p.join("world.toml").exists()) {
         return Some(p);
     }
 
     // 2. {workspace}/skills/{name}
     let skill_path = workspace.join("skills").join(&expanded);
-    if skill_path.is_dir() && skill_path.join("world.toml").exists() {
+    if skill_path.is_dir()
+        && (skill_path.join("world.ron").exists() || skill_path.join("world.toml").exists())
+    {
         return Some(skill_path);
     }
 
@@ -454,27 +657,6 @@ fn resolve_world_path(path: &str, workspace: &Path) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn collect_audio_state(engine: &AudioEngine) -> AudioFile {
-    AudioFile {
-        ambience: engine.last_ambience.as_ref().map(|cmd| AmbienceDef {
-            layers: cmd.layers.clone(),
-            master_volume: cmd.master_volume,
-        }),
-        emitters: engine
-            .emitter_meta
-            .iter()
-            .map(|(name, meta)| AudioEmitterCmd {
-                name: name.clone(),
-                entity: meta.attached_to.clone(),
-                position: meta.position,
-                sound: meta.sound.clone(),
-                radius: meta.radius,
-                volume: meta.base_volume,
-            })
-            .collect(),
-    }
-}
 
 /// Export scene geometry to GLB. Delegates to `gltf_export::export_glb`.
 #[allow(clippy::too_many_arguments)]
@@ -510,76 +692,7 @@ fn export_scene_glb(
 mod tests {
     use super::*;
 
-    #[test]
-    fn avatar_serialization_roundtrip() {
-        let avatar = AvatarDef {
-            spawn_position: [1.0, 1.8, 5.0],
-            spawn_look_at: [0.0, 1.5, 0.0],
-            pov: PointOfView::FirstPerson,
-            movement_speed: 3.0,
-            height: 1.8,
-            model_entity: Some("player".to_string()),
-        };
-
-        let manifest = WorldManifest {
-            world: WorldMeta {
-                name: "test".to_string(),
-                description: None,
-                scene: default_scene_file(),
-                behaviors: default_behaviors_file(),
-                audio: default_audio_file(),
-                tours: default_tours_file(),
-            },
-            environment: None,
-            camera: None,
-            avatar: Some(avatar),
-        };
-
-        let toml_str = toml::to_string_pretty(&manifest).unwrap();
-        let parsed: WorldManifest = toml::from_str(&toml_str).unwrap();
-        let a = parsed.avatar.unwrap();
-        assert_eq!(a.pov, PointOfView::FirstPerson);
-        assert_eq!(a.spawn_position, [1.0, 1.8, 5.0]);
-        assert_eq!(a.model_entity.as_deref(), Some("player"));
-    }
-
-    #[test]
-    fn tours_serialization_roundtrip() {
-        let tours = ToursFile {
-            tours: vec![TourDef {
-                name: "grand_tour".to_string(),
-                description: Some("A tour".to_string()),
-                waypoints: vec![
-                    TourWaypoint {
-                        position: [0.0, 1.0, 5.0],
-                        look_at: [0.0, 1.5, 0.0],
-                        description: Some("Start".to_string()),
-                        pause_duration: 3.0,
-                    },
-                    TourWaypoint {
-                        position: [10.0, 1.0, 0.0],
-                        look_at: [5.0, 2.0, -5.0],
-                        description: None,
-                        pause_duration: 0.0,
-                    },
-                ],
-                speed: 2.0,
-                mode: TourMode::Walk,
-                autostart: false,
-                loop_tour: true,
-                pov: Some(PointOfView::ThirdPerson),
-            }],
-        };
-
-        let toml_str = toml::to_string_pretty(&tours).unwrap();
-        let parsed: ToursFile = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.tours.len(), 1);
-        assert_eq!(parsed.tours[0].name, "grand_tour");
-        assert_eq!(parsed.tours[0].waypoints.len(), 2);
-        assert_eq!(parsed.tours[0].mode, TourMode::Walk);
-        assert!(parsed.tours[0].loop_tour);
-    }
-
+    // Legacy format backward compatibility test
     #[test]
     fn backward_compatible_manifest_without_avatar_or_tours() {
         let toml_str = r#"
@@ -594,55 +707,85 @@ position = [5.0, 5.0, 5.0]
 look_at = [0.0, 0.0, 0.0]
 fov_degrees = 45.0
 "#;
-        let parsed: WorldManifest = toml::from_str(toml_str).unwrap();
+        let parsed: LegacyManifest = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.world.name, "legacy_world");
         assert!(parsed.avatar.is_none());
         assert_eq!(parsed.world.tours, "tours.toml");
     }
 
     #[test]
-    fn default_avatar_values() {
-        let avatar = AvatarDef::default();
-        assert_eq!(avatar.pov, PointOfView::ThirdPerson);
-        assert_eq!(avatar.movement_speed, 5.0);
-        assert_eq!(avatar.height, 1.8);
-        assert!(avatar.model_entity.is_none());
+    fn ron_manifest_roundtrip() {
+        let mut manifest = wt::WorldManifest::new("test_world");
+        manifest.meta.description = Some("A test".to_string());
+        manifest.environment = Some(wt::EnvironmentDef {
+            background_color: Some([0.1, 0.1, 0.2, 1.0]),
+            ambient_intensity: Some(0.3),
+            ambient_color: None,
+            fog_density: None,
+            fog_color: None,
+        });
+        manifest.camera = Some(wt::CameraDef::default());
+        manifest.avatar = Some(wt::AvatarDef::default());
+        manifest.entities.push(
+            wt::WorldEntity::new(1, "cube").with_shape(wt::Shape::Cuboid {
+                x: 2.0,
+                y: 2.0,
+                z: 2.0,
+            }),
+        );
+        manifest.next_entity_id = 2;
+
+        let ron_str =
+            ron::ser::to_string_pretty(&manifest, ron::ser::PrettyConfig::default()).unwrap();
+        let back: wt::WorldManifest = ron::from_str(&ron_str).unwrap();
+        assert_eq!(back.meta.name, "test_world");
+        assert_eq!(back.entities.len(), 1);
+        assert_eq!(back.entities[0].name.as_str(), "cube");
+        assert!(back.entities[0].shape.is_some());
     }
 
     #[test]
-    fn tour_modes_serialize_correctly() {
-        let walk_tour = TourDef {
-            name: "walk".to_string(),
-            description: None,
-            waypoints: vec![],
-            speed: 2.0,
-            mode: TourMode::Walk,
-            autostart: false,
-            loop_tour: false,
-            pov: None,
-        };
-        let fly_tour = TourDef {
-            mode: TourMode::Fly,
-            name: "fly".to_string(),
-            ..walk_tour.clone()
-        };
-        let tp_tour = TourDef {
-            mode: TourMode::Teleport,
-            name: "tp".to_string(),
-            ..walk_tour.clone()
-        };
+    fn ron_manifest_with_behaviors_and_audio() {
+        let mut manifest = wt::WorldManifest::new("campfire_scene");
 
-        let file = ToursFile {
-            tours: vec![walk_tour, fly_tour, tp_tour],
-        };
-        let toml_str = toml::to_string_pretty(&file).unwrap();
-        assert!(toml_str.contains("\"walk\""));
-        assert!(toml_str.contains("\"fly\""));
-        assert!(toml_str.contains("\"teleport\""));
+        // A campfire entity with shape + light + audio + behavior
+        let campfire = wt::WorldEntity::new(1, "campfire")
+            .at([5.0, 0.0, 3.0])
+            .with_shape(wt::Shape::Cone {
+                radius: 0.5,
+                height: 1.0,
+            })
+            .with_material(wt::MaterialDef {
+                color: [0.8, 0.3, 0.1, 1.0],
+                ..Default::default()
+            })
+            .with_behavior(wt::BehaviorDef::Pulse {
+                min_scale: 0.9,
+                max_scale: 1.1,
+                frequency: 0.5,
+            })
+            .with_audio(wt::AudioDef {
+                kind: wt::AudioKind::Sfx,
+                source: wt::AudioSource::Fire {
+                    intensity: 0.8,
+                    crackle: 0.5,
+                },
+                volume: 0.7,
+                radius: Some(15.0),
+                rolloff: wt::Rolloff::InverseSquare,
+            });
 
-        let parsed: ToursFile = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.tours[0].mode, TourMode::Walk);
-        assert_eq!(parsed.tours[1].mode, TourMode::Fly);
-        assert_eq!(parsed.tours[2].mode, TourMode::Teleport);
+        manifest.entities.push(campfire);
+        manifest.next_entity_id = 2;
+
+        let ron_str =
+            ron::ser::to_string_pretty(&manifest, ron::ser::PrettyConfig::default()).unwrap();
+        let back: wt::WorldManifest = ron::from_str(&ron_str).unwrap();
+        let e = &back.entities[0];
+        assert_eq!(e.name.as_str(), "campfire");
+        assert!(e.shape.is_some());
+        assert!(e.material.is_some());
+        assert_eq!(e.behaviors.len(), 1);
+        assert!(e.audio.is_some());
     }
 }
