@@ -44,7 +44,10 @@ pub fn create_gen_tools(bridge: Arc<GenBridge>) -> Vec<Box<dyn Tool>> {
         Box::new(GenSaveWorldTool::new(bridge.clone())),
         Box::new(GenLoadWorldTool::new(bridge.clone())),
         // Scene management
-        Box::new(GenClearSceneTool::new(bridge)),
+        Box::new(GenClearSceneTool::new(bridge.clone())),
+        // Undo/Redo
+        Box::new(GenUndoTool::new(bridge.clone())),
+        Box::new(GenRedoTool::new(bridge)),
     ]
 }
 
@@ -1806,6 +1809,85 @@ impl Tool for GenClearSceneTool {
             GenResponse::SceneCleared { removed_count } => {
                 Ok(format!("Scene cleared: {} entities removed", removed_count))
             }
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// Undo/Redo tools
+// ===========================================================================
+
+struct GenUndoTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenUndoTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenUndoTool {
+    fn name(&self) -> &str {
+        "gen_undo"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_undo".into(),
+            description: "Undo the last scene edit (spawn, delete, or modify entity). Can be called multiple times to undo further back.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }
+    }
+
+    async fn execute(&self, _arguments: &str) -> Result<String> {
+        match self.bridge.send(GenCommand::Undo).await? {
+            GenResponse::Undone { description } => Ok(format!("Undone: {}", description)),
+            GenResponse::NothingToUndo => Ok("Nothing to undo".to_string()),
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+struct GenRedoTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenRedoTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenRedoTool {
+    fn name(&self) -> &str {
+        "gen_redo"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_redo".into(),
+            description: "Redo a previously undone scene edit. Only available after gen_undo."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }
+    }
+
+    async fn execute(&self, _arguments: &str) -> Result<String> {
+        match self.bridge.send(GenCommand::Redo).await? {
+            GenResponse::Redone { description } => Ok(format!("Redone: {}", description)),
+            GenResponse::NothingToRedo => Ok("Nothing to redo".to_string()),
             GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
             other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
         }

@@ -165,6 +165,9 @@ pub fn handle_save_world(
     audio_engine: &AudioEngine,
     behaviors_query: &Query<&mut EntityBehaviors>,
     parametric_shapes: &Query<&ParametricShape>,
+    directional_lights: &Query<&DirectionalLight>,
+    point_lights: &Query<&PointLight>,
+    spot_lights: &Query<&SpotLight>,
     env_snapshot: &EnvironmentSnapshot,
     avatar: Option<&AvatarDef>,
     tours: &[TourDef],
@@ -245,11 +248,37 @@ pub fn handle_save_world(
             });
         }
 
-        // Light
-        // (Lights are separate entities in the current architecture.
-        //  We store them as entities with a LightDef component.)
-        // For now, light data is inferred from GenEntityType::Light
-        // and is not yet stored as a wt::LightDef.
+        // Light — extract from Bevy light components
+        if gen_ent.entity_type == GenEntityType::Light {
+            if let Ok(dl) = directional_lights.get(bevy_entity) {
+                let c = dl.color.to_srgba();
+                we.light = Some(wt::LightDef {
+                    light_type: wt::LightType::Directional,
+                    color: [c.red, c.green, c.blue, c.alpha],
+                    intensity: dl.illuminance,
+                    direction: None,
+                    shadows: dl.shadows_enabled,
+                });
+            } else if let Ok(pl) = point_lights.get(bevy_entity) {
+                let c = pl.color.to_srgba();
+                we.light = Some(wt::LightDef {
+                    light_type: wt::LightType::Point,
+                    color: [c.red, c.green, c.blue, c.alpha],
+                    intensity: pl.intensity,
+                    direction: None,
+                    shadows: pl.shadows_enabled,
+                });
+            } else if let Ok(sl) = spot_lights.get(bevy_entity) {
+                let c = sl.color.to_srgba();
+                we.light = Some(wt::LightDef {
+                    light_type: wt::LightType::Spot,
+                    color: [c.red, c.green, c.blue, c.alpha],
+                    intensity: sl.intensity,
+                    direction: None,
+                    shadows: sl.shadows_enabled,
+                });
+            }
+        }
 
         // Behaviors
         if let Ok(eb) = behaviors_query.get(bevy_entity) {

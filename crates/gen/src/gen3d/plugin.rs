@@ -309,6 +309,9 @@ struct GenCommandParams<'w, 's> {
     mesh_handles: Query<'w, 's, &'static Mesh3d>,
     behaviors_query: Query<'w, 's, &'static mut EntityBehaviors>,
     parametric_shapes: Query<'w, 's, &'static ParametricShape>,
+    directional_lights: Query<'w, 's, &'static DirectionalLight>,
+    point_lights: Query<'w, 's, &'static PointLight>,
+    spot_lights: Query<'w, 's, &'static SpotLight>,
     clear_color: Option<Res<'w, ClearColor>>,
     ambient_light: Option<Res<'w, GlobalAmbientLight>>,
     pending_world: ResMut<'w, PendingWorldSetup>,
@@ -365,16 +368,82 @@ fn process_gen_commands(
                 &mut params.registry,
                 &mut params.next_entity_id,
             ),
-            GenCommand::ModifyEntity(cmd) => handle_modify_entity(
-                cmd,
-                &mut commands,
-                &params.registry,
-                &mut params.materials,
-                &params.material_handles,
-                &params.transforms,
-            ),
+            GenCommand::ModifyEntity(cmd) => {
+                // Snapshot before modify so we can undo
+                let pre_snapshot = params.registry.get_entity(&cmd.name).and_then(|e| {
+                    params.registry.get_id(e).map(|id| {
+                        snapshot_entity(
+                            &cmd.name,
+                            e,
+                            id,
+                            &params.transforms,
+                            &params.parametric_shapes,
+                            &params.material_handles,
+                            &params.materials,
+                            &params.directional_lights,
+                            &params.point_lights,
+                            &params.spot_lights,
+                        )
+                    })
+                });
+                let resp = handle_modify_entity(
+                    cmd.clone(),
+                    &mut commands,
+                    &params.registry,
+                    &mut params.materials,
+                    &params.material_handles,
+                    &params.transforms,
+                );
+                if let GenResponse::Modified { .. } = &resp
+                    && let Some(old_we) = pre_snapshot
+                {
+                    let id = old_we.id;
+                    let mut new_we = old_we.clone();
+                    apply_modify_to_snapshot(&mut new_we, &cmd);
+                    params.dirty_tracker.mark_dirty(id);
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch {
+                            ops: vec![wt::EditOp::delete(id), wt::EditOp::spawn(new_we)],
+                        },
+                        wt::EditOp::Batch {
+                            ops: vec![wt::EditOp::delete(id), wt::EditOp::spawn(old_we)],
+                        },
+                        None,
+                    );
+                }
+                resp
+            }
             GenCommand::DeleteEntity { name } => {
-                handle_delete_entity(&name, &mut commands, &mut params.registry)
+                // Snapshot before delete so we can undo
+                let pre_snapshot = params.registry.get_entity(&name).and_then(|e| {
+                    params.registry.get_id(e).map(|id| {
+                        snapshot_entity(
+                            &name,
+                            e,
+                            id,
+                            &params.transforms,
+                            &params.parametric_shapes,
+                            &params.material_handles,
+                            &params.materials,
+                            &params.directional_lights,
+                            &params.point_lights,
+                            &params.spot_lights,
+                        )
+                    })
+                });
+                let resp = handle_delete_entity(&name, &mut commands, &mut params.registry);
+                if let GenResponse::Deleted { .. } = &resp
+                    && let Some(we) = pre_snapshot
+                {
+                    let id = we.id;
+                    params.dirty_tracker.mark_dirty(id);
+                    params.undo_stack.history.push(
+                        wt::EditOp::delete(id),
+                        wt::EditOp::spawn(we),
+                        None,
+                    );
+                }
+                resp
             }
             GenCommand::SetCamera(cmd) => handle_set_camera(cmd, &mut commands, &params.registry),
             GenCommand::SetLight(cmd) => handle_set_light(
@@ -523,6 +592,9 @@ fn process_gen_commands(
                     &params.audio_engine,
                     &params.behaviors_query,
                     &params.parametric_shapes,
+                    &params.directional_lights,
+                    &params.point_lights,
+                    &params.spot_lights,
                     &env_data,
                     params.avatar_config.active.as_ref(),
                     &params.world_tours.tours,
@@ -687,6 +759,9 @@ fn process_gen_commands(
                         &params.parametric_shapes,
                         &params.material_handles,
                         &params.materials,
+                        &params.directional_lights,
+                        &params.point_lights,
+                        &params.spot_lights,
                     );
                     params.undo_stack.history.push(
                         wt::EditOp::spawn(we),
@@ -1770,6 +1845,7 @@ fn spawn_light_entity(
 /// Capture the current ECS state of an entity as a `wt::WorldEntity`.
 ///
 /// Used to record the entity state before/after modifications for undo history.
+#[allow(clippy::too_many_arguments)]
 fn snapshot_entity(
     name: &str,
     entity: bevy::ecs::entity::Entity,
@@ -1778,6 +1854,9 @@ fn snapshot_entity(
     parametric_shapes: &Query<&ParametricShape>,
     material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
     materials: &Assets<StandardMaterial>,
+    directional_lights: &Query<&DirectionalLight>,
+    point_lights: &Query<&PointLight>,
+    spot_lights: &Query<&SpotLight>,
 ) -> wt::WorldEntity {
     let mut we = wt::WorldEntity::new(id.0, name);
 
@@ -1812,7 +1891,74 @@ fn snapshot_entity(
         });
     }
 
+    // Light
+    if let Ok(dl) = directional_lights.get(entity) {
+        let c = dl.color.to_srgba();
+        we.light = Some(wt::LightDef {
+            light_type: wt::LightType::Directional,
+            color: [c.red, c.green, c.blue, c.alpha],
+            intensity: dl.illuminance,
+            direction: None,
+            shadows: dl.shadows_enabled,
+        });
+    } else if let Ok(pl) = point_lights.get(entity) {
+        let c = pl.color.to_srgba();
+        we.light = Some(wt::LightDef {
+            light_type: wt::LightType::Point,
+            color: [c.red, c.green, c.blue, c.alpha],
+            intensity: pl.intensity,
+            direction: None,
+            shadows: pl.shadows_enabled,
+        });
+    } else if let Ok(sl) = spot_lights.get(entity) {
+        let c = sl.color.to_srgba();
+        we.light = Some(wt::LightDef {
+            light_type: wt::LightType::Spot,
+            color: [c.red, c.green, c.blue, c.alpha],
+            intensity: sl.intensity,
+            direction: None,
+            shadows: sl.shadows_enabled,
+        });
+    }
+
     we
+}
+
+/// Construct the expected post-modify state by applying a `ModifyEntityCmd`
+/// to a pre-modify snapshot.  Used for undo/redo of modify operations.
+fn apply_modify_to_snapshot(we: &mut wt::WorldEntity, cmd: &ModifyEntityCmd) {
+    if let Some(pos) = cmd.position {
+        we.transform.position = pos;
+    }
+    if let Some(rot) = cmd.rotation_degrees {
+        we.transform.rotation_degrees = rot;
+    }
+    if let Some(scale) = cmd.scale {
+        we.transform.scale = scale;
+    }
+    if let Some(visible) = cmd.visible {
+        we.transform.visible = visible;
+    }
+    if cmd.color.is_some()
+        || cmd.metallic.is_some()
+        || cmd.roughness.is_some()
+        || cmd.emissive.is_some()
+    {
+        let mut mat = we.material.clone().unwrap_or_default();
+        if let Some(color) = cmd.color {
+            mat.color = color;
+        }
+        if let Some(metallic) = cmd.metallic {
+            mat.metallic = metallic;
+        }
+        if let Some(roughness) = cmd.roughness {
+            mat.roughness = roughness;
+        }
+        if let Some(emissive) = cmd.emissive {
+            mat.emissive = emissive;
+        }
+        we.material = Some(mat);
+    }
 }
 
 /// Apply a single `EditOp` to the scene. Returns a human-readable description.

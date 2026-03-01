@@ -4,7 +4,7 @@ sidebar_position: 14.1
 
 # Gen Tools Reference
 
-The gen agent has access to 24 specialized tools organized by category.
+The gen agent has access to 26 specialized tools organized by category.
 
 ## Scene Query
 
@@ -75,3 +75,10 @@ Save and load complete worlds as reusable skills. See [World Skills](/docs/gen/w
 | `gen_save_world` | Save scene, behaviors, and audio to a skill directory |
 | `gen_load_world` | Load a saved world (clears existing scene by default) |
 | `gen_clear_scene` | Clear all entities, behaviors, and audio |
+
+## Undo/Redo
+
+| Tool | Description |
+|------|-------------|
+| `gen_undo` | Undo the last scene edit (spawn, delete, or modify) |
+| `gen_redo` | Redo a previously undone edit |
