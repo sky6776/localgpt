@@ -1,7 +1,7 @@
 //! Memory search types and utilities
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// A chunk of memory content returned from search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +89,7 @@ impl MemoryChunk {
 /// Formula: MMR = λ * relevance - (1-λ) * max_similarity_to_selected
 ///
 /// This helps avoid showing multiple very similar chunks in results.
+#[allow(dead_code)]
 pub struct MmrReranker {
     /// Trade-off between relevance (1.0) and diversity (0.0)
     /// Default: 0.7 (slightly favor relevance)
@@ -133,7 +134,7 @@ impl MmrReranker {
         let mut remaining: Vec<usize> = (0..chunks.len()).collect();
 
         // Select first item (highest relevance)
-        if let Some((best_pos, best_idx)) = remaining.iter().enumerate().max_by(|(_, a), (_, b)| {
+        if let Some((best_pos, _best_idx)) = remaining.iter().enumerate().max_by(|(_, a), (_, b)| {
             original_scores[**a]
                 .partial_cmp(&original_scores[**b])
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -146,7 +147,7 @@ impl MmrReranker {
             let best = remaining
                 .iter()
                 .enumerate()
-                .max_by(|(pos_a, idx_a), (pos_b, idx_b)| {
+                .max_by(|(_pos_a, idx_a), (_pos_b, idx_b)| {
                     let mmr_a =
                         self.compute_mmr(**idx_a, original_scores[**idx_a], &selected, &token_sets);
                     let mmr_b =
@@ -199,6 +200,7 @@ impl MmrReranker {
 }
 
 /// Simple whitespace tokenizer with lowercase normalization
+#[allow(dead_code)]
 fn tokenize(text: &str) -> HashSet<String> {
     text.to_lowercase()
         .split_whitespace()
@@ -209,6 +211,7 @@ fn tokenize(text: &str) -> HashSet<String> {
 }
 
 /// Compute Jaccard similarity between two token sets
+#[allow(dead_code)]
 fn jaccard_similarity(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
@@ -227,11 +230,13 @@ fn jaccard_similarity(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
 /// Apply MMR re-ranking to search results.
 ///
 /// This is a convenience function that creates a reranker with default lambda (0.7).
+#[allow(dead_code)]
 pub fn apply_mmr(chunks: &mut [MemoryChunk]) {
     MmrReranker::default().rerank(chunks);
 }
 
 /// Apply MMR re-ranking with custom lambda.
+#[allow(dead_code)]
 pub fn apply_mmr_with_lambda(chunks: &mut [MemoryChunk], lambda: f64) {
     MmrReranker::new(lambda).rerank(chunks);
 }

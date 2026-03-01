@@ -16,3 +16,5 @@ pub mod security;
 pub use http::Server;
 #[cfg(not(target_arch = "wasm32"))]
 pub use security::BridgeManager;
+#[cfg(not(target_arch = "wasm32"))]
+pub use security::HealthStatus;

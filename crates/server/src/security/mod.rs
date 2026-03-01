@@ -2,4 +2,4 @@
 
 pub mod bridge;
 
-pub use bridge::{BridgeManager, BridgeStatus};
+pub use bridge::{BridgeManager, BridgeStatus, HealthStatus};
