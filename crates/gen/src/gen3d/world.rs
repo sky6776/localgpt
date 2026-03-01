@@ -169,6 +169,7 @@ pub fn handle_save_world(
     directional_lights: &Query<&DirectionalLight>,
     point_lights: &Query<&PointLight>,
     spot_lights: &Query<&SpotLight>,
+    projections: &Query<&Projection>,
     env_snapshot: &EnvironmentSnapshot,
     avatar: Option<&AvatarDef>,
     tours: &[TourDef],
@@ -331,10 +332,18 @@ pub fn handle_save_world(
         transforms.get(e).ok().map(|t| {
             let forward = t.forward().as_vec3();
             let look_at = t.translation + forward * 10.0;
+            let fov_degrees = projections
+                .get(e)
+                .ok()
+                .and_then(|p| match p {
+                    Projection::Perspective(pp) => Some(pp.fov.to_degrees()),
+                    _ => None,
+                })
+                .unwrap_or(45.0);
             wt::CameraDef {
                 position: t.translation.to_array(),
                 look_at: look_at.to_array(),
-                fov_degrees: 45.0,
+                fov_degrees,
             }
         })
     });
