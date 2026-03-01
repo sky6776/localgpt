@@ -380,6 +380,7 @@ fn process_gen_commands(
                             &params.parametric_shapes,
                             &params.material_handles,
                             &params.materials,
+                            &params.visibility_query,
                             &params.directional_lights,
                             &params.point_lights,
                             &params.spot_lights,
@@ -425,6 +426,7 @@ fn process_gen_commands(
                             &params.parametric_shapes,
                             &params.material_handles,
                             &params.materials,
+                            &params.visibility_query,
                             &params.directional_lights,
                             &params.point_lights,
                             &params.spot_lights,
@@ -592,6 +594,7 @@ fn process_gen_commands(
                     &params.audio_engine,
                     &params.behaviors_query,
                     &params.parametric_shapes,
+                    &params.visibility_query,
                     &params.directional_lights,
                     &params.point_lights,
                     &params.spot_lights,
@@ -759,6 +762,7 @@ fn process_gen_commands(
                         &params.parametric_shapes,
                         &params.material_handles,
                         &params.materials,
+                        &params.visibility_query,
                         &params.directional_lights,
                         &params.point_lights,
                         &params.spot_lights,
@@ -1854,6 +1858,7 @@ fn snapshot_entity(
     parametric_shapes: &Query<&ParametricShape>,
     material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
     materials: &Assets<StandardMaterial>,
+    visibility_query: &Query<&Visibility>,
     directional_lights: &Query<&DirectionalLight>,
     point_lights: &Query<&PointLight>,
     spot_lights: &Query<&SpotLight>,
@@ -1870,7 +1875,10 @@ fn snapshot_entity(
                 euler.2.to_degrees(),
             ],
             scale: transform.scale.to_array(),
-            visible: true,
+            visible: visibility_query
+                .get(entity)
+                .map(|v| *v != Visibility::Hidden)
+                .unwrap_or(true),
         };
     }
 

@@ -165,6 +165,7 @@ pub fn handle_save_world(
     audio_engine: &AudioEngine,
     behaviors_query: &Query<&mut EntityBehaviors>,
     parametric_shapes: &Query<&ParametricShape>,
+    visibility_query: &Query<&Visibility>,
     directional_lights: &Query<&DirectionalLight>,
     point_lights: &Query<&PointLight>,
     spot_lights: &Query<&SpotLight>,
@@ -217,7 +218,10 @@ pub fn handle_save_world(
                 euler.2.to_degrees(),
             ],
             scale: transform.scale.to_array(),
-            visible: true,
+            visible: visibility_query
+                .get(bevy_entity)
+                .map(|v| *v != Visibility::Hidden)
+                .unwrap_or(true),
         };
 
         // Parent
