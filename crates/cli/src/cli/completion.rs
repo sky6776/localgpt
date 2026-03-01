@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 use clap::{CommandFactory, ValueEnum};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::io;
 
 #[derive(clap::Args, Debug)]
@@ -51,12 +51,7 @@ pub fn run(args: CompletionArgs) -> Result<()> {
     let mut cmd = crate::cli::Cli::command();
     let shell: Shell = args.shell.into();
 
-    generate(
-        shell,
-        &mut cmd,
-        "localgpt",
-        &mut io::stdout(),
-    );
+    generate(shell, &mut cmd, "localgpt", &mut io::stdout());
 
     Ok(())
 }

@@ -437,7 +437,8 @@ pub fn handle_spawn_audio_emitter(
     cmd: AudioEmitterCmd,
     engine: &mut AudioEngine,
     bevy_commands: &mut Commands,
-    registry: &NameRegistry,
+    registry: &mut NameRegistry,
+    next_entity_id: &mut super::registry::NextEntityId,
 ) -> GenResponse {
     if !engine.active {
         return GenResponse::AudioEmitterSpawned {
@@ -486,20 +487,24 @@ pub fn handle_spawn_audio_emitter(
             });
         }
     } else if let Some(pos) = cmd.position {
-        bevy_commands.spawn((
-            Transform::from_translation(bevy::math::Vec3::from_array(pos)),
-            Name::new(cmd.name.clone()),
-            GenEntity {
-                entity_type: super::registry::GenEntityType::AudioEmitter,
-                world_id: None,
-            },
-            AudioEmitter {
-                sound: cmd.sound.clone(),
-                radius: cmd.radius,
-                volume: cmd.volume,
-                emitter_name: cmd.name.clone(),
-            },
-        ));
+        let wid = next_entity_id.alloc();
+        let entity = bevy_commands
+            .spawn((
+                Transform::from_translation(bevy::math::Vec3::from_array(pos)),
+                Name::new(cmd.name.clone()),
+                GenEntity {
+                    entity_type: super::registry::GenEntityType::AudioEmitter,
+                    world_id: wid,
+                },
+                AudioEmitter {
+                    sound: cmd.sound.clone(),
+                    radius: cmd.radius,
+                    volume: cmd.volume,
+                    emitter_name: cmd.name.clone(),
+                },
+            ))
+            .id();
+        registry.insert_with_id(cmd.name.clone(), entity, wid);
     }
 
     GenResponse::AudioEmitterSpawned { name: cmd.name }

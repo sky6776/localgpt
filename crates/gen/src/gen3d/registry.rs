@@ -1,7 +1,8 @@
-//! Name → Entity bidirectional registry.
+//! Name → Entity bidirectional registry with stable world IDs.
 //!
 //! All Gen entities are referenced by human-readable names rather than
-//! opaque Bevy Entity IDs. This registry maintains the mapping.
+//! opaque Bevy Entity IDs. This registry maintains the mapping and also
+//! tracks stable `EntityId`s that survive save/load cycles.
 
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -14,7 +15,7 @@ pub struct GenEntity {
     /// What kind of entity this is (for scene_info reporting).
     pub entity_type: GenEntityType,
     /// Stable entity ID from the world data model (survives renames).
-    pub world_id: Option<wt::EntityId>,
+    pub world_id: wt::EntityId,
 }
 
 /// Bevy component storing the parametric shape alongside the mesh.
@@ -51,18 +52,59 @@ impl GenEntityType {
     }
 }
 
-/// Bevy resource that maps names ↔ entities.
+/// Monotonic allocator for stable entity IDs.
+#[derive(Resource)]
+pub struct NextEntityId {
+    next: u64,
+}
+
+impl Default for NextEntityId {
+    fn default() -> Self {
+        // Start at 1 — 0 is reserved for "no entity".
+        Self { next: 1 }
+    }
+}
+
+impl NextEntityId {
+    /// Allocate the next entity ID.
+    pub fn alloc(&mut self) -> wt::EntityId {
+        let id = wt::EntityId(self.next);
+        self.next += 1;
+        id
+    }
+
+    /// Ensure the counter is at least `min_next` (used after loading a world
+    /// that already has assigned IDs).
+    pub fn ensure_at_least(&mut self, min_next: u64) {
+        if min_next > self.next {
+            self.next = min_next;
+        }
+    }
+}
+
+/// Bevy resource that maps names ↔ entities ↔ world IDs.
 #[derive(Resource, Default)]
 pub struct NameRegistry {
     name_to_entity: HashMap<String, Entity>,
     entity_to_name: HashMap<Entity, String>,
+    id_to_entity: HashMap<u64, Entity>,
+    entity_to_id: HashMap<Entity, u64>,
 }
 
 #[allow(dead_code)]
 impl NameRegistry {
+    /// Insert a name ↔ entity mapping (without a world ID).
     pub fn insert(&mut self, name: String, entity: Entity) {
         self.name_to_entity.insert(name.clone(), entity);
         self.entity_to_name.insert(entity, name);
+    }
+
+    /// Insert a name ↔ entity mapping with a stable world ID.
+    pub fn insert_with_id(&mut self, name: String, entity: Entity, id: wt::EntityId) {
+        self.name_to_entity.insert(name.clone(), entity);
+        self.entity_to_name.insert(entity, name);
+        self.id_to_entity.insert(id.0, entity);
+        self.entity_to_id.insert(entity, id.0);
     }
 
     pub fn get_entity(&self, name: &str) -> Option<Entity> {
@@ -73,9 +115,23 @@ impl NameRegistry {
         self.entity_to_name.get(&entity).map(|s| s.as_str())
     }
 
+    /// Look up a Bevy entity by its stable world ID.
+    pub fn get_entity_by_id(&self, id: &wt::EntityId) -> Option<Entity> {
+        self.id_to_entity.get(&id.0).copied()
+    }
+
+    /// Look up a stable world ID by Bevy entity.
+    pub fn get_id(&self, entity: Entity) -> Option<wt::EntityId> {
+        self.entity_to_id.get(&entity).map(|id| wt::EntityId(*id))
+    }
+
     pub fn remove_by_name(&mut self, name: &str) -> Option<Entity> {
         if let Some(entity) = self.name_to_entity.remove(name) {
             self.entity_to_name.remove(&entity);
+            // Also clean up ID mappings
+            if let Some(id) = self.entity_to_id.remove(&entity) {
+                self.id_to_entity.remove(&id);
+            }
             Some(entity)
         } else {
             None
@@ -85,6 +141,9 @@ impl NameRegistry {
     pub fn remove_by_entity(&mut self, entity: Entity) -> Option<String> {
         if let Some(name) = self.entity_to_name.remove(&entity) {
             self.name_to_entity.remove(&name);
+            if let Some(id) = self.entity_to_id.remove(&entity) {
+                self.id_to_entity.remove(&id);
+            }
             Some(name)
         } else {
             None
@@ -105,5 +164,52 @@ impl NameRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.name_to_entity.is_empty()
+    }
+}
+
+/// Tracks which entities have been modified since the last save.
+///
+/// Enables incremental saves for large worlds — only dirty entities
+/// need to be re-serialized. Call `mark_dirty` on spawn, modify,
+/// behavior add/remove, and audio changes. Call `clear` after a
+/// successful save.
+#[derive(Resource, Default)]
+pub struct DirtyTracker {
+    dirty: std::collections::HashSet<u64>,
+    /// Set when any world-level metadata changed (environment, camera, avatar, tours).
+    pub world_meta_dirty: bool,
+}
+
+#[allow(dead_code)]
+impl DirtyTracker {
+    /// Mark an entity as modified.
+    pub fn mark_dirty(&mut self, id: wt::EntityId) {
+        self.dirty.insert(id.0);
+    }
+
+    /// Check if an entity is dirty.
+    pub fn is_dirty(&self, id: &wt::EntityId) -> bool {
+        self.dirty.contains(&id.0)
+    }
+
+    /// Check if anything has changed since the last save.
+    pub fn has_changes(&self) -> bool {
+        !self.dirty.is_empty() || self.world_meta_dirty
+    }
+
+    /// Get all dirty entity IDs.
+    pub fn dirty_ids(&self) -> impl Iterator<Item = wt::EntityId> + '_ {
+        self.dirty.iter().map(|id| wt::EntityId(*id))
+    }
+
+    /// Number of dirty entities.
+    pub fn dirty_count(&self) -> usize {
+        self.dirty.len()
+    }
+
+    /// Clear all dirty flags (call after a successful save).
+    pub fn clear(&mut self) {
+        self.dirty.clear();
+        self.world_meta_dirty = false;
     }
 }

@@ -116,7 +116,12 @@ fn list_jobs() -> Result<()> {
     for job in &config.cron.jobs {
         let status = if job.enabled { "✓" } else { "✗" };
         let channel = job.channel.as_deref().unwrap_or("none");
-        println!("  [{}] {} ({})", status, job.name, if job.enabled { "enabled" } else { "disabled" });
+        println!(
+            "  [{}] {} ({})",
+            status,
+            job.name,
+            if job.enabled { "enabled" } else { "disabled" }
+        );
         println!("      Schedule: {}", job.schedule);
         println!("      Timeout:  {}", job.timeout);
         println!("      Channel:  {}", channel);
@@ -130,13 +135,16 @@ fn list_jobs() -> Result<()> {
 fn add_job(args: AddArgs) -> Result<()> {
     let mut config = Config::load()?;
 
-    let name = args.name.unwrap_or_else(|| {
-        format!("job-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"))
-    });
+    let name = args
+        .name
+        .unwrap_or_else(|| format!("job-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S")));
 
     // Check for duplicate name
     if config.cron.jobs.iter().any(|j| j.name == name) {
-        bail!("A cron job named '{}' already exists. Use a different name with --name.", name);
+        bail!(
+            "A cron job named '{}' already exists. Use a different name with --name.",
+            name
+        );
     }
 
     let job = localgpt_core::config::CronJob {

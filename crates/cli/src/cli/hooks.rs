@@ -132,7 +132,12 @@ fn list_hooks() -> Result<()> {
 
     for hook in &config.hooks.hooks {
         let status = if hook.enabled { "✓" } else { "✗" };
-        println!("  [{}] {} ({})", status, hook.name, if hook.enabled { "enabled" } else { "disabled" });
+        println!(
+            "  [{}] {} ({})",
+            status,
+            hook.name,
+            if hook.enabled { "enabled" } else { "disabled" }
+        );
         println!("      Event:   {}", hook.event);
         println!("      Command: {}", hook.command);
         if let Some(ref filter) = hook.filter {
@@ -157,12 +162,19 @@ fn add_hook(args: AddArgs) -> Result<()> {
     let mut config = Config::load()?;
 
     let name = args.name.unwrap_or_else(|| {
-        format!("hook-{}-{}", args.event.to_lowercase(), chrono::Utc::now().format("%Y%m%d-%H%M%S"))
+        format!(
+            "hook-{}-{}",
+            args.event.to_lowercase(),
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        )
     });
 
     // Check for duplicate name
     if config.hooks.hooks.iter().any(|h| h.name == name) {
-        bail!("A hook named '{}' already exists. Use a different name with --name.", name);
+        bail!(
+            "A hook named '{}' already exists. Use a different name with --name.",
+            name
+        );
     }
 
     let hook = localgpt_core::config::HookConfig {
@@ -283,7 +295,9 @@ fn test_hook(args: TestArgs) -> Result<()> {
     println!();
 
     // Build the command with environment variables
-    let payload = args.payload.unwrap_or_else(|| r#"{"test": true}"#.to_string());
+    let payload = args
+        .payload
+        .unwrap_or_else(|| r#"{"test": true}"#.to_string());
 
     let output = std::process::Command::new("sh")
         .arg("-c")

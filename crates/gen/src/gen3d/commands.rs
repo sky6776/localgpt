@@ -84,6 +84,10 @@ pub enum GenCommand {
         keep_camera: bool,
         keep_lights: bool,
     },
+
+    // Tier 9: Undo/Redo
+    Undo,
+    Redo,
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +672,16 @@ pub enum GenResponse {
     SceneCleared {
         removed_count: usize,
     },
+
+    // Undo/Redo
+    Undone {
+        description: String,
+    },
+    Redone {
+        description: String,
+    },
+    NothingToUndo,
+    NothingToRedo,
 
     Error {
         message: String,

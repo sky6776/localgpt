@@ -197,11 +197,7 @@ pub fn handle_save_world(
             continue;
         }
 
-        let entity_id = gen_ent.world_id.unwrap_or_else(|| {
-            let id = wt::EntityId(next_id);
-            next_id += 1;
-            id
-        });
+        let entity_id = gen_ent.world_id;
         if entity_id.0 >= next_id {
             next_id = entity_id.0 + 1;
         }
@@ -227,7 +223,7 @@ pub fn handle_save_world(
             && let Some(parent_bevy) = registry.get_entity(parent_name)
             && let Ok(parent_gen) = gen_entities.get(parent_bevy)
         {
-            we.parent = parent_gen.world_id;
+            we.parent = Some(parent_gen.world_id);
         }
 
         // Shape (from ParametricShape component — preserves dimensions!)

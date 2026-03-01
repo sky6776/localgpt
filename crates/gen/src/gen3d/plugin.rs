@@ -10,6 +10,8 @@ use bevy::scene::SceneRoot;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
+use localgpt_world_types as wt;
+
 use super::GenChannels;
 use super::audio::{self, SpatialAudioListener};
 use super::behaviors::{self, BehaviorState, EntityBehaviors};
@@ -53,6 +55,15 @@ struct PendingScreenshot {
 #[derive(Resource)]
 pub struct GenInitialScene {
     pub path: Option<PathBuf>,
+}
+
+/// Undo/redo stack wrapping `EditHistory` from world-types.
+///
+/// Records `WorldEdit` operations (spawn, delete, modify) as they happen.
+/// `gen_undo` / `gen_redo` commands apply inverse operations to restore state.
+#[derive(Resource, Default)]
+pub struct UndoStack {
+    pub history: wt::EditHistory,
 }
 
 /// A glTF scene that is currently being loaded.
@@ -150,6 +161,9 @@ pub fn setup_gen_app(
             path: initial_scene,
         })
         .init_resource::<NameRegistry>()
+        .init_resource::<NextEntityId>()
+        .init_resource::<DirtyTracker>()
+        .init_resource::<UndoStack>()
         .init_resource::<PendingScreenshots>()
         .init_resource::<PendingGltfLoads>()
         .init_resource::<PendingWorldSetup>()
@@ -183,8 +197,10 @@ fn setup_default_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut registry: ResMut<NameRegistry>,
+    mut next_id: ResMut<NextEntityId>,
 ) {
     // Ground plane — 20×20 gray
+    let ground_id = next_id.alloc();
     let ground = commands
         .spawn((
             Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(10.0, 10.0)))),
@@ -198,13 +214,14 @@ fn setup_default_scene(
             Name::new("ground_plane"),
             GenEntity {
                 entity_type: GenEntityType::Primitive,
-                world_id: None,
+                world_id: ground_id,
             },
         ))
         .id();
-    registry.insert("ground_plane".into(), ground);
+    registry.insert_with_id("ground_plane".into(), ground, ground_id);
 
     // Camera at (5, 5, 5) looking at origin
+    let cam_id = next_id.alloc();
     let camera = commands
         .spawn((
             Camera3d::default(),
@@ -214,13 +231,14 @@ fn setup_default_scene(
             SpatialAudioListener,
             GenEntity {
                 entity_type: GenEntityType::Camera,
-                world_id: None,
+                world_id: cam_id,
             },
         ))
         .id();
-    registry.insert("main_camera".into(), camera);
+    registry.insert_with_id("main_camera".into(), camera, cam_id);
 
     // Directional light — warm white, shadows
+    let light_id = next_id.alloc();
     let light = commands
         .spawn((
             DirectionalLight {
@@ -233,11 +251,11 @@ fn setup_default_scene(
             Name::new("main_light"),
             GenEntity {
                 entity_type: GenEntityType::Light,
-                world_id: None,
+                world_id: light_id,
             },
         ))
         .id();
-    registry.insert("main_light".into(), light);
+    registry.insert_with_id("main_light".into(), light, light_id);
 }
 
 /// Load the initial scene file if provided.
@@ -272,6 +290,9 @@ struct GenCommandParams<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
     registry: ResMut<'w, NameRegistry>,
+    next_entity_id: ResMut<'w, NextEntityId>,
+    dirty_tracker: ResMut<'w, DirtyTracker>,
+    undo_stack: ResMut<'w, UndoStack>,
     pending_screenshots: ResMut<'w, PendingScreenshots>,
     pending_gltf: ResMut<'w, PendingGltfLoads>,
     audio_engine: ResMut<'w, audio::AudioEngine>,
@@ -342,6 +363,7 @@ fn process_gen_commands(
                 &mut params.meshes,
                 &mut params.materials,
                 &mut params.registry,
+                &mut params.next_entity_id,
             ),
             GenCommand::ModifyEntity(cmd) => handle_modify_entity(
                 cmd,
@@ -355,7 +377,12 @@ fn process_gen_commands(
                 handle_delete_entity(&name, &mut commands, &mut params.registry)
             }
             GenCommand::SetCamera(cmd) => handle_set_camera(cmd, &mut commands, &params.registry),
-            GenCommand::SetLight(cmd) => handle_set_light(cmd, &mut commands, &mut params.registry),
+            GenCommand::SetLight(cmd) => handle_set_light(
+                cmd,
+                &mut commands,
+                &mut params.registry,
+                &mut params.next_entity_id,
+            ),
             GenCommand::SetEnvironment(cmd) => handle_set_environment(cmd, &mut commands),
             GenCommand::SpawnMesh(cmd) => handle_spawn_mesh(
                 cmd,
@@ -363,6 +390,7 @@ fn process_gen_commands(
                 &mut params.meshes,
                 &mut params.materials,
                 &mut params.registry,
+                &mut params.next_entity_id,
             ),
             GenCommand::ExportScreenshot {
                 path,
@@ -428,7 +456,8 @@ fn process_gen_commands(
                 cmd,
                 &mut params.audio_engine,
                 &mut commands,
-                &params.registry,
+                &mut params.registry,
+                &mut params.next_entity_id,
             ),
             GenCommand::ModifyAudioEmitter(cmd) => {
                 audio::handle_modify_audio_emitter(cmd, &mut params.audio_engine)
@@ -529,6 +558,7 @@ fn process_gen_commands(
                                 &mut params.meshes,
                                 &mut params.materials,
                                 &mut params.registry,
+                                &mut params.next_entity_id,
                                 &mut params.behavior_state,
                             );
                         } else if let Some(scene_path) = world_load.scene_path
@@ -571,7 +601,8 @@ fn process_gen_commands(
                                 emitter_cmd.clone(),
                                 &mut params.audio_engine,
                                 &mut commands,
-                                &params.registry,
+                                &mut params.registry,
+                                &mut params.next_entity_id,
                             );
                         }
 
@@ -619,7 +650,73 @@ fn process_gen_commands(
                 params.world_tours.tours.clear();
                 resp
             }
+
+            GenCommand::Undo => handle_undo(
+                &mut params.undo_stack,
+                &mut commands,
+                &mut params.meshes,
+                &mut params.materials,
+                &mut params.registry,
+                &mut params.next_entity_id,
+                &mut params.behavior_state,
+            ),
+            GenCommand::Redo => handle_redo(
+                &mut params.undo_stack,
+                &mut commands,
+                &mut params.meshes,
+                &mut params.materials,
+                &mut params.registry,
+                &mut params.next_entity_id,
+                &mut params.behavior_state,
+            ),
         };
+
+        // Mark entities dirty and record undo history.
+        match &response {
+            GenResponse::Spawned { name, .. } | GenResponse::LightSet { name } => {
+                if let Some(bevy_ent) = params.registry.get_entity(name)
+                    && let Some(id) = params.registry.get_id(bevy_ent)
+                {
+                    params.dirty_tracker.mark_dirty(id);
+                    // Record undo: inverse of spawn is delete
+                    let we = snapshot_entity(
+                        name,
+                        bevy_ent,
+                        id,
+                        &params.transforms,
+                        &params.parametric_shapes,
+                        &params.material_handles,
+                        &params.materials,
+                    );
+                    params.undo_stack.history.push(
+                        wt::EditOp::spawn(we),
+                        wt::EditOp::delete(id),
+                        None,
+                    );
+                }
+            }
+            GenResponse::Modified { name }
+            | GenResponse::BehaviorAdded { entity: name, .. }
+            | GenResponse::BehaviorRemoved { entity: name, .. }
+            | GenResponse::AudioEmitterSpawned { name } => {
+                if let Some(bevy_ent) = params.registry.get_entity(name)
+                    && let Some(id) = params.registry.get_id(bevy_ent)
+                {
+                    params.dirty_tracker.mark_dirty(id);
+                }
+            }
+            GenResponse::EnvironmentSet | GenResponse::CameraSet => {
+                params.dirty_tracker.world_meta_dirty = true;
+            }
+            GenResponse::WorldSaved { .. } => {
+                params.dirty_tracker.clear();
+            }
+            GenResponse::WorldLoaded { .. } | GenResponse::SceneCleared { .. } => {
+                params.dirty_tracker.clear();
+                params.undo_stack.history = wt::EditHistory::new();
+            }
+            _ => {}
+        }
 
         let _ = channel_res.channels.resp_tx.send(response);
     }
@@ -714,6 +811,7 @@ fn process_pending_gltf_loads(
 fn process_pending_world_setup(
     mut pending: ResMut<PendingWorldSetup>,
     mut registry: ResMut<NameRegistry>,
+    mut next_entity_id: ResMut<NextEntityId>,
     mut commands: Commands,
     transforms: Query<&Transform>,
     mut behavior_state: ResMut<BehaviorState>,
@@ -745,10 +843,11 @@ fn process_pending_world_setup(
     for (entity, name) in named_entities.iter() {
         let name_str = name.as_str();
         if needed.contains(name_str) && registry.get_entity(name_str).is_none() {
-            registry.insert(name_str.to_string(), entity);
+            let wid = next_entity_id.alloc();
+            registry.insert_with_id(name_str.to_string(), entity, wid);
             commands.entity(entity).insert(GenEntity {
                 entity_type: GenEntityType::Mesh,
-                world_id: None,
+                world_id: wid,
             });
             found_count += 1;
         }
@@ -784,7 +883,8 @@ fn process_pending_world_setup(
             emitter_cmd.clone(),
             &mut audio_engine,
             &mut commands,
-            &registry,
+            &mut registry,
+            &mut next_entity_id,
         );
     }
 
@@ -946,6 +1046,7 @@ fn handle_spawn_primitive(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     registry: &mut ResMut<NameRegistry>,
+    next_id: &mut ResMut<NextEntityId>,
 ) -> GenResponse {
     if registry.contains_name(&cmd.name) {
         return GenResponse::Error {
@@ -1022,6 +1123,7 @@ fn handle_spawn_primitive(
         shape: compat::shape_from_primitive(cmd.shape, &cmd.dimensions),
     };
 
+    let wid = next_id.alloc();
     let entity = commands
         .spawn((
             Mesh3d(mesh),
@@ -1030,7 +1132,7 @@ fn handle_spawn_primitive(
             Name::new(cmd.name.clone()),
             GenEntity {
                 entity_type: GenEntityType::Primitive,
-                world_id: None,
+                world_id: wid,
             },
             parametric,
         ))
@@ -1044,7 +1146,7 @@ fn handle_spawn_primitive(
     }
 
     let entity_id = entity.to_bits();
-    registry.insert(cmd.name.clone(), entity);
+    registry.insert_with_id(cmd.name.clone(), entity, wid);
 
     GenResponse::Spawned {
         name: cmd.name,
@@ -1197,6 +1299,7 @@ fn handle_set_light(
     cmd: SetLightCmd,
     commands: &mut Commands,
     registry: &mut ResMut<NameRegistry>,
+    next_id: &mut ResMut<NextEntityId>,
 ) -> GenResponse {
     let color = Color::srgba(cmd.color[0], cmd.color[1], cmd.color[2], cmd.color[3]);
 
@@ -1206,6 +1309,7 @@ fn handle_set_light(
         registry.remove_by_name(&cmd.name);
     }
 
+    let wid = next_id.alloc();
     let entity = match cmd.light_type {
         LightType::Directional => {
             let dir = cmd.direction.unwrap_or([0.0, -1.0, -0.5]);
@@ -1223,7 +1327,7 @@ fn handle_set_light(
                     Name::new(cmd.name.clone()),
                     GenEntity {
                         entity_type: GenEntityType::Light,
-                        world_id: None,
+                        world_id: wid,
                     },
                 ))
                 .id()
@@ -1242,7 +1346,7 @@ fn handle_set_light(
                     Name::new(cmd.name.clone()),
                     GenEntity {
                         entity_type: GenEntityType::Light,
-                        world_id: None,
+                        world_id: wid,
                     },
                 ))
                 .id()
@@ -1264,14 +1368,14 @@ fn handle_set_light(
                     Name::new(cmd.name.clone()),
                     GenEntity {
                         entity_type: GenEntityType::Light,
-                        world_id: None,
+                        world_id: wid,
                     },
                 ))
                 .id()
         }
     };
 
-    registry.insert(cmd.name.clone(), entity);
+    registry.insert_with_id(cmd.name.clone(), entity, wid);
 
     GenResponse::LightSet { name: cmd.name }
 }
@@ -1304,6 +1408,7 @@ fn handle_spawn_mesh(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     registry: &mut ResMut<NameRegistry>,
+    next_id: &mut ResMut<NextEntityId>,
 ) -> GenResponse {
     if registry.contains_name(&cmd.name) {
         return GenResponse::Error {
@@ -1342,6 +1447,7 @@ fn handle_spawn_mesh(
         ..default()
     });
 
+    let wid = next_id.alloc();
     let entity = commands
         .spawn((
             Mesh3d(meshes.add(mesh)),
@@ -1350,13 +1456,13 @@ fn handle_spawn_mesh(
             Name::new(cmd.name.clone()),
             GenEntity {
                 entity_type: GenEntityType::Mesh,
-                world_id: None,
+                world_id: wid,
             },
         ))
         .id();
 
     let entity_id = entity.to_bits();
-    registry.insert(cmd.name.clone(), entity);
+    registry.insert_with_id(cmd.name.clone(), entity, wid);
 
     GenResponse::Spawned {
         name: cmd.name,
@@ -1367,8 +1473,6 @@ fn handle_spawn_mesh(
 // ---------------------------------------------------------------------------
 // Spawn world entities from RON WorldManifest
 // ---------------------------------------------------------------------------
-
-use localgpt_world_types as wt;
 
 /// Spawn all entities from a loaded RON `WorldManifest`.
 ///
@@ -1384,6 +1488,7 @@ fn spawn_world_entities(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     registry: &mut ResMut<NameRegistry>,
+    next_entity_id: &mut ResMut<NextEntityId>,
     behavior_state: &mut BehaviorState,
 ) {
     // First pass: collect world_id → entity name for parent resolution
@@ -1415,7 +1520,8 @@ fn spawn_world_entities(
             scale: Vec3::from_array(we.transform.scale),
         };
 
-        let world_id = Some(wt::EntityId(we.id.0));
+        let world_id = wt::EntityId(we.id.0);
+        next_entity_id.ensure_at_least(we.id.0 + 1);
 
         // Determine what kind of entity to spawn based on component slots
         let bevy_entity = if let Some(ref shape) = we.shape {
@@ -1478,7 +1584,7 @@ fn spawn_world_entities(
                 .id()
         };
 
-        registry.insert(name.clone(), bevy_entity);
+        registry.insert_with_id(name.clone(), bevy_entity, world_id);
 
         // Attach behaviors
         if !we.behaviors.is_empty() {
@@ -1586,7 +1692,7 @@ fn spawn_light_entity(
     light: &wt::LightDef,
     name: &str,
     transform: Transform,
-    world_id: Option<wt::EntityId>,
+    world_id: wt::EntityId,
     commands: &mut Commands,
 ) -> bevy::ecs::entity::Entity {
     let color = Color::srgba(
@@ -1655,6 +1761,167 @@ fn spawn_light_entity(
                 .id()
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Undo/Redo support
+// ---------------------------------------------------------------------------
+
+/// Capture the current ECS state of an entity as a `wt::WorldEntity`.
+///
+/// Used to record the entity state before/after modifications for undo history.
+fn snapshot_entity(
+    name: &str,
+    entity: bevy::ecs::entity::Entity,
+    id: wt::EntityId,
+    transforms: &Query<&Transform>,
+    parametric_shapes: &Query<&ParametricShape>,
+    material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
+    materials: &Assets<StandardMaterial>,
+) -> wt::WorldEntity {
+    let mut we = wt::WorldEntity::new(id.0, name);
+
+    if let Ok(transform) = transforms.get(entity) {
+        let euler = transform.rotation.to_euler(EulerRot::XYZ);
+        we.transform = wt::WorldTransform {
+            position: transform.translation.to_array(),
+            rotation_degrees: [
+                euler.0.to_degrees(),
+                euler.1.to_degrees(),
+                euler.2.to_degrees(),
+            ],
+            scale: transform.scale.to_array(),
+            visible: true,
+        };
+    }
+
+    if let Ok(param) = parametric_shapes.get(entity) {
+        we.shape = Some(param.shape.clone());
+    }
+
+    if let Ok(mat_handle) = material_handles.get(entity)
+        && let Some(mat) = materials.get(&mat_handle.0)
+    {
+        let c = mat.base_color.to_srgba();
+        let e = mat.emissive;
+        we.material = Some(wt::MaterialDef {
+            color: [c.red, c.green, c.blue, c.alpha],
+            metallic: mat.metallic,
+            roughness: mat.perceptual_roughness,
+            emissive: [e.red, e.green, e.blue, e.alpha],
+        });
+    }
+
+    we
+}
+
+/// Apply a single `EditOp` to the scene. Returns a human-readable description.
+fn apply_edit_op(
+    op: &wt::EditOp,
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    registry: &mut ResMut<NameRegistry>,
+    next_entity_id: &mut ResMut<NextEntityId>,
+    behavior_state: &mut BehaviorState,
+) -> String {
+    match op {
+        wt::EditOp::DeleteEntity { id } => {
+            if let Some(entity) = registry.get_entity_by_id(id) {
+                let name = registry.get_name(entity).unwrap_or("unknown").to_string();
+                registry.remove_by_entity(entity);
+                commands.entity(entity).despawn();
+                format!("deleted '{}'", name)
+            } else {
+                format!("entity id {} not found", id.0)
+            }
+        }
+        wt::EditOp::SpawnEntity { entity } => {
+            let name = entity.name.as_str().to_string();
+            spawn_world_entities(
+                std::slice::from_ref(entity),
+                commands,
+                meshes,
+                materials,
+                registry,
+                next_entity_id,
+                behavior_state,
+            );
+            format!("re-spawned '{}'", name)
+        }
+        wt::EditOp::ModifyEntity { id, .. } => {
+            format!("modify undo for entity {} not yet implemented", id.0)
+        }
+        wt::EditOp::Batch { ops } => {
+            let descriptions: Vec<String> = ops
+                .iter()
+                .map(|o| {
+                    apply_edit_op(
+                        o,
+                        commands,
+                        meshes,
+                        materials,
+                        registry,
+                        next_entity_id,
+                        behavior_state,
+                    )
+                })
+                .collect();
+            descriptions.join("; ")
+        }
+    }
+}
+
+fn handle_undo(
+    undo_stack: &mut ResMut<UndoStack>,
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    registry: &mut ResMut<NameRegistry>,
+    next_entity_id: &mut ResMut<NextEntityId>,
+    behavior_state: &mut BehaviorState,
+) -> GenResponse {
+    let op = match undo_stack.history.undo() {
+        Some(op) => op.clone(),
+        None => return GenResponse::NothingToUndo,
+    };
+
+    let description = apply_edit_op(
+        &op,
+        commands,
+        meshes,
+        materials,
+        registry,
+        next_entity_id,
+        behavior_state,
+    );
+    GenResponse::Undone { description }
+}
+
+fn handle_redo(
+    undo_stack: &mut ResMut<UndoStack>,
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    registry: &mut ResMut<NameRegistry>,
+    next_entity_id: &mut ResMut<NextEntityId>,
+    behavior_state: &mut BehaviorState,
+) -> GenResponse {
+    let op = match undo_stack.history.redo() {
+        Some(op) => op.clone(),
+        None => return GenResponse::NothingToRedo,
+    };
+
+    let description = apply_edit_op(
+        &op,
+        commands,
+        meshes,
+        materials,
+        registry,
+        next_entity_id,
+        behavior_state,
+    );
+    GenResponse::Redone { description }
 }
 
 // ---------------------------------------------------------------------------
