@@ -2027,20 +2027,34 @@ fn insert_light_component(
             });
         }
         wt::LightType::Point => {
-            entity_cmd.insert(PointLight {
+            let mut pl = PointLight {
                 intensity: light.intensity,
                 shadows_enabled: light.shadows,
                 color,
                 ..default()
-            });
+            };
+            if let Some(r) = light.range {
+                pl.range = r;
+            }
+            entity_cmd.insert(pl);
         }
         wt::LightType::Spot => {
-            entity_cmd.insert(SpotLight {
+            let mut sl = SpotLight {
                 intensity: light.intensity,
                 shadows_enabled: light.shadows,
                 color,
                 ..default()
-            });
+            };
+            if let Some(r) = light.range {
+                sl.range = r;
+            }
+            if let Some(oa) = light.outer_angle {
+                sl.outer_angle = oa;
+            }
+            if let Some(ia) = light.inner_angle {
+                sl.inner_angle = ia;
+            }
+            entity_cmd.insert(sl);
         }
     }
 }
@@ -2081,34 +2095,50 @@ fn spawn_light_entity(
                 ))
                 .id()
         }
-        wt::LightType::Point => commands
-            .spawn((
-                PointLight {
-                    intensity: light.intensity,
-                    shadows_enabled: light.shadows,
-                    color,
-                    ..default()
-                },
-                transform,
-                Name::new(name.to_string()),
-                GenEntity {
-                    entity_type: GenEntityType::Light,
-                    world_id,
-                },
-            ))
-            .id(),
+        wt::LightType::Point => {
+            let mut pl = PointLight {
+                intensity: light.intensity,
+                shadows_enabled: light.shadows,
+                color,
+                ..default()
+            };
+            if let Some(r) = light.range {
+                pl.range = r;
+            }
+            commands
+                .spawn((
+                    pl,
+                    transform,
+                    Name::new(name.to_string()),
+                    GenEntity {
+                        entity_type: GenEntityType::Light,
+                        world_id,
+                    },
+                ))
+                .id()
+        }
         wt::LightType::Spot => {
             let dir = light.direction.unwrap_or([0.0, -1.0, 0.0]);
             let light_transform = Transform::from_translation(transform.translation)
                 .looking_at(transform.translation + Vec3::from_array(dir), Vec3::Y);
+            let mut sl = SpotLight {
+                intensity: light.intensity,
+                shadows_enabled: light.shadows,
+                color,
+                ..default()
+            };
+            if let Some(r) = light.range {
+                sl.range = r;
+            }
+            if let Some(oa) = light.outer_angle {
+                sl.outer_angle = oa;
+            }
+            if let Some(ia) = light.inner_angle {
+                sl.inner_angle = ia;
+            }
             commands
                 .spawn((
-                    SpotLight {
-                        intensity: light.intensity,
-                        shadows_enabled: light.shadows,
-                        color,
-                        ..default()
-                    },
+                    sl,
                     light_transform,
                     Name::new(name.to_string()),
                     GenEntity {
@@ -2202,6 +2232,9 @@ fn snapshot_entity(
             intensity: dl.illuminance,
             direction: dir,
             shadows: dl.shadows_enabled,
+            range: None,
+            outer_angle: None,
+            inner_angle: None,
         });
     } else if let Ok(pl) = sq.point_lights.get(entity) {
         let c = pl.color.to_srgba();
@@ -2211,6 +2244,9 @@ fn snapshot_entity(
             intensity: pl.intensity,
             direction: None,
             shadows: pl.shadows_enabled,
+            range: Some(pl.range),
+            outer_angle: None,
+            inner_angle: None,
         });
     } else if let Ok(sl) = sq.spot_lights.get(entity) {
         let c = sl.color.to_srgba();
@@ -2225,6 +2261,9 @@ fn snapshot_entity(
             intensity: sl.intensity,
             direction: dir,
             shadows: sl.shadows_enabled,
+            range: Some(sl.range),
+            outer_angle: Some(sl.outer_angle),
+            inner_angle: Some(sl.inner_angle),
         });
     }
 

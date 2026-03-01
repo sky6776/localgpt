@@ -228,6 +228,9 @@ mod tests {
                 intensity: 500.0,
                 direction: None,
                 shadows: true,
+                range: None,
+                outer_angle: None,
+                inner_angle: None,
             })
             .with_audio(AudioDef {
                 kind: AudioKind::Sfx,

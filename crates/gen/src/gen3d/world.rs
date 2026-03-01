@@ -264,6 +264,9 @@ pub fn handle_save_world(
                     intensity: dl.illuminance,
                     direction: Some(dir),
                     shadows: dl.shadows_enabled,
+                    range: None,
+                    outer_angle: None,
+                    inner_angle: None,
                 });
             } else if let Ok(pl) = point_lights.get(bevy_entity) {
                 let c = pl.color.to_srgba();
@@ -273,6 +276,9 @@ pub fn handle_save_world(
                     intensity: pl.intensity,
                     direction: None,
                     shadows: pl.shadows_enabled,
+                    range: Some(pl.range),
+                    outer_angle: None,
+                    inner_angle: None,
                 });
             } else if let Ok(sl) = spot_lights.get(bevy_entity) {
                 let c = sl.color.to_srgba();
@@ -283,6 +289,9 @@ pub fn handle_save_world(
                     intensity: sl.intensity,
                     direction: Some(dir),
                     shadows: sl.shadows_enabled,
+                    range: Some(sl.range),
+                    outer_angle: Some(sl.outer_angle),
+                    inner_angle: Some(sl.inner_angle),
                 });
             }
         }

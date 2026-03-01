@@ -20,6 +20,16 @@ pub struct LightDef {
     /// Whether this light casts shadows.
     #[serde(default = "default_true")]
     pub shadows: bool,
+    /// Maximum range/radius for point and spot lights (in world units).
+    /// `None` uses the engine default. Ignored for directional lights.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<f32>,
+    /// Outer cone angle in radians (spot lights only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outer_angle: Option<f32>,
+    /// Inner cone angle in radians (spot lights only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner_angle: Option<f32>,
 }
 
 impl Default for LightDef {
@@ -30,6 +40,9 @@ impl Default for LightDef {
             intensity: default_intensity(),
             direction: None,
             shadows: true,
+            range: None,
+            outer_angle: None,
+            inner_angle: None,
         }
     }
 }
@@ -75,5 +88,39 @@ mod tests {
         assert_eq!(l.light_type, LightType::Directional);
         assert!(l.shadows);
         assert_eq!(l.intensity, 1000.0);
+        assert!(l.range.is_none());
+        assert!(l.outer_angle.is_none());
+        assert!(l.inner_angle.is_none());
+    }
+
+    #[test]
+    fn spot_light_roundtrip_with_angles() {
+        let light = LightDef {
+            light_type: LightType::Spot,
+            color: [1.0, 0.9, 0.7, 1.0],
+            intensity: 800.0,
+            direction: Some([0.0, -1.0, 0.0]),
+            shadows: true,
+            range: Some(25.0),
+            outer_angle: Some(0.7),
+            inner_angle: Some(0.5),
+        };
+        let json = serde_json::to_string(&light).unwrap();
+        let back: LightDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(light, back);
+        assert_eq!(back.range, Some(25.0));
+        assert_eq!(back.outer_angle, Some(0.7));
+        assert_eq!(back.inner_angle, Some(0.5));
+    }
+
+    #[test]
+    fn light_without_optional_fields_deserializes() {
+        // Simulate loading an old save without range/angle fields
+        let json = r#"{"light_type":"point","color":[1,1,1,1],"intensity":500,"shadows":true}"#;
+        let light: LightDef = serde_json::from_str(json).unwrap();
+        assert_eq!(light.light_type, LightType::Point);
+        assert!(light.range.is_none());
+        assert!(light.outer_angle.is_none());
+        assert!(light.inner_angle.is_none());
     }
 }

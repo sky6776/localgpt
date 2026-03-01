@@ -152,6 +152,9 @@ impl From<&SetLightCmd> for wt::LightDef {
             intensity: cmd.intensity,
             direction: cmd.direction,
             shadows: cmd.shadows,
+            range: None,
+            outer_angle: None,
+            inner_angle: None,
         }
     }
 }
