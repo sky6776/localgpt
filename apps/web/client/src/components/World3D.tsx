@@ -1,103 +1,132 @@
-import { useRef } from 'react'
+import { useRef, useMemo } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Grid, PerspectiveCamera } from '@react-three/drei'
+import { OrbitControls, Grid, PerspectiveCamera, Text } from '@react-three/drei'
 import * as THREE from 'three'
 
-interface WorldEntity {
+// Types from useSpacetime hook (flat fields for SpacetimeDB 2.0)
+interface WorldEntityRow {
   id: number
+  name: string
   entityType: string
   x: number
   y: number
   z: number
-  rotationY: number
+  rotPitch: number
+  rotYaw: number
+  rotRoll: number
   scale: number
-  metadata: string
+  shapeJson: string
+  materialJson: string | null
+  lightJson: string | null
+  behaviorsJson: string
+  audioJson: string | null
+  chunkX: number
+  chunkY: number
+  owner: string | null
+  createdAt: bigint
 }
 
 interface Player {
   identity: string
+  device: string
   name: string
   x: number
   y: number
   z: number
   rotationY: number
   online: boolean
+  lastSeen: bigint
 }
 
 interface World3DProps {
-  entities: WorldEntity[]
+  entities: WorldEntityRow[]
   players: Player[]
   onMove: (x: number, y: number, z: number, rotationY: number) => void
 }
 
-function Entity({ entity }: { entity: WorldEntity }) {
-  const ref = useRef<THREE.Mesh>(null)
-
-  // Get color based on entity type
-  const getColor = () => {
-    switch (entity.entityType) {
-      case 'tree': return '#228B22'
-      case 'rock': return '#808080'
-      case 'building': return '#8B4513'
-      case 'water': return '#4169E1'
-      default: return '#FF69B4'
+// Parse shape from JSON
+function parseShape(shapeJson: string): { kind: string; params: Record<string, number> } {
+  try {
+    const parsed = JSON.parse(shapeJson)
+    const key = Object.keys(parsed)[0]
+    if (key) {
+      return { kind: key.toLowerCase(), params: parsed[key] }
     }
+  } catch {
+    // Ignore parse errors
   }
+  return { kind: 'cuboid', params: { x: 1, y: 1, z: 1 } }
+}
 
-  // Get geometry based on entity type
-  const renderGeometry = () => {
-    switch (entity.entityType) {
-      case 'tree':
-        return (
-          <group>
-            <mesh position={[0, 0.5, 0]}>
-              <cylinderGeometry args={[0.2, 0.3, 1, 8]} />
-              <meshStandardMaterial color="#8B4513" />
-            </mesh>
-            <mesh position={[0, 1.5, 0]}>
-              <coneGeometry args={[1, 2, 8]} />
-              <meshStandardMaterial color={getColor()} />
-            </mesh>
-          </group>
-        )
-      case 'rock':
-        return (
-          <mesh>
-            <dodecahedronGeometry args={[0.5]} />
-            <meshStandardMaterial color={getColor()} flatShading />
-          </mesh>
-        )
-      case 'building':
-        return (
-          <group>
-            <mesh position={[0, 1, 0]}>
-              <boxGeometry args={[2, 2, 2]} />
-              <meshStandardMaterial color={getColor()} />
-            </mesh>
-            <mesh position={[0, 2.5, 0]} rotation={[0, Math.PI / 4, 0]}>
-              <coneGeometry args={[1.5, 1, 4]} />
-              <meshStandardMaterial color="#A0522D" />
-            </mesh>
-          </group>
-        )
+// Parse color from material JSON
+function parseMaterialColor(materialJson: string | null): string {
+  if (!materialJson) return '#888888'
+  try {
+    const mat = JSON.parse(materialJson)
+    if (mat.color && Array.isArray(mat.color)) {
+      const [r, g, b] = mat.color
+      return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`
+    }
+  } catch {
+    // Ignore
+  }
+  return '#888888'
+}
+
+function Entity({ entity }: { entity: WorldEntityRow }) {
+  const ref = useRef<THREE.Group>(null)
+  const { kind, params } = parseShape(entity.shapeJson)
+  const color = parseMaterialColor(entity.materialJson)
+
+  const geometry = useMemo(() => {
+    switch (kind) {
+      case 'sphere':
+        return <sphereGeometry args={[params.radius || 0.5, 16, 16]} />
+      case 'cylinder':
+        return <cylinderGeometry args={[params.radius || 0.5, params.radius || 0.5, params.height || 1, 16]} />
+      case 'cone':
+        return <coneGeometry args={[params.radius || 0.5, params.height || 1, 16]} />
+      case 'capsule':
+        return <capsuleGeometry args={[params.radius || 0.25, params.half_length || 0.5, 8, 16]} />
+      case 'torus':
+        return <torusGeometry args={[params.major_radius || 1, params.minor_radius || 0.25, 16, 32]} />
+      case 'plane':
+        return <boxGeometry args={[params.x || 10, 0.1, params.z || 10]} />
+      case 'cuboid':
       default:
-        return (
-          <mesh>
-            <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial color={getColor()} />
-          </mesh>
-        )
+        return <boxGeometry args={[params.x || 1, params.y || 1, params.z || 1]} />
     }
-  }
+  }, [kind, params])
+
+  // Convert rotation from degrees to radians
+  const rotation = useMemo(() => [
+    (entity.rotPitch * Math.PI) / 180,
+    (entity.rotYaw * Math.PI) / 180,
+    (entity.rotRoll * Math.PI) / 180,
+  ], [entity.rotPitch, entity.rotYaw, entity.rotRoll])
 
   return (
     <group
       ref={ref}
       position={[entity.x, entity.y, entity.z]}
-      rotation={[0, (entity.rotationY * Math.PI) / 180, 0]}
+      rotation={rotation}
       scale={entity.scale}
     >
-      {renderGeometry()}
+      <mesh castShadow receiveShadow>
+        {geometry}
+        <meshStandardMaterial color={color} />
+      </mesh>
+
+      {/* Entity name label */}
+      <Text
+        position={[0, 1.5, 0]}
+        fontSize={0.3}
+        color="white"
+        anchorX="center"
+        anchorY="middle"
+      >
+        {entity.name}
+      </Text>
     </group>
   )
 }
@@ -107,7 +136,6 @@ function PlayerAvatar({ player, isSelf }: { player: Player; isSelf: boolean }) {
 
   useFrame(() => {
     if (ref.current) {
-      // Smooth interpolation to target position
       ref.current.position.x = THREE.MathUtils.lerp(ref.current.position.x, player.x, 0.1)
       ref.current.position.y = THREE.MathUtils.lerp(ref.current.position.y, player.y, 0.1)
       ref.current.position.z = THREE.MathUtils.lerp(ref.current.position.z, player.z, 0.1)
@@ -117,33 +145,39 @@ function PlayerAvatar({ player, isSelf }: { player: Player; isSelf: boolean }) {
   return (
     <group ref={ref} position={[player.x, player.y, player.z]}>
       {/* Body */}
-      <mesh position={[0, 0.5, 0]}>
+      <mesh position={[0, 0.5, 0]} castShadow>
         <capsuleGeometry args={[0.3, 0.6, 4, 8]} />
         <meshStandardMaterial color={isSelf ? '#4F9' : '#4AF'} />
       </mesh>
       {/* Head */}
-      <mesh position={[0, 1.2, 0]}>
+      <mesh position={[0, 1.2, 0]} castShadow>
         <sphereGeometry args={[0.25, 16, 16]} />
         <meshStandardMaterial color={isSelf ? '#4F9' : '#4AF'} />
       </mesh>
       {/* Name label */}
-      <sprite position={[0, 1.8, 0]}>
-        <textGeometry args={[player.name, { size: 0.2, height: 0.02 }]} />
-      </sprite>
+      <Text
+        position={[0, 1.8, 0]}
+        fontSize={0.25}
+        color={isSelf ? '#4F9' : '#4AF'}
+        anchorX="center"
+        anchorY="middle"
+      >
+        {player.name}
+      </Text>
     </group>
   )
 }
 
 function Ground() {
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
-      <planeGeometry args={[100, 100]} />
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
+      <planeGeometry args={[200, 200]} />
       <meshStandardMaterial color="#3a5f3a" />
     </mesh>
   )
 }
 
-function Scene({ entities, players, identity }: { entities: WorldEntity[]; players: Player[]; identity: string | null }) {
+function Scene({ entities, players, identity }: { entities: WorldEntityRow[]; players: Player[]; identity: string | null }) {
   return (
     <>
       <ambientLight intensity={0.5} />
@@ -151,7 +185,7 @@ function Scene({ entities, players, identity }: { entities: WorldEntity[]; playe
       <pointLight position={[-10, 10, -10]} intensity={0.5} />
 
       <Ground />
-      <Grid args={[100, 100]} position={[0, 0.01, 0]} />
+      <Grid args={[200, 200]} position={[0, 0.01, 0]} cellSize={64} fadeDistance={150} />
 
       {entities.map(entity => (
         <Entity key={entity.id} entity={entity} />
@@ -169,7 +203,7 @@ function Scene({ entities, players, identity }: { entities: WorldEntity[]; playe
         target={[0, 0, 0]}
         maxPolarAngle={Math.PI / 2 - 0.1}
         minDistance={5}
-        maxDistance={50}
+        maxDistance={100}
       />
 
       <PerspectiveCamera makeDefault position={[20, 15, 20]} />

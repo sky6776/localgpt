@@ -32,6 +32,10 @@
   color: #4f9;
 }
 
+.device-icon {
+  font-size: 0.85rem;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

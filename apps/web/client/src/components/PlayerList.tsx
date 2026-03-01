@@ -3,12 +3,14 @@ import './PlayerList.css'
 
 interface Player {
   identity: string
+  device: string
   name: string
   x: number
   y: number
   z: number
   rotationY: number
   online: boolean
+  lastSeen: bigint
 }
 
 interface PlayerListProps {
@@ -35,6 +37,19 @@ export function PlayerList({ players, identity, setName }: PlayerListProps) {
     setIsEditing(false)
   }
 
+  const getDeviceIcon = (device: string) => {
+    switch (device) {
+      case 'ios':
+      case 'android':
+      case 'mobile':
+        return '📱'
+      case 'web':
+        return '🌐'
+      default:
+        return '👤'
+    }
+  }
+
   return (
     <div className="player-list">
       <h3>Players</h3>
@@ -49,11 +64,16 @@ export function PlayerList({ players, identity, setName }: PlayerListProps) {
                   onChange={e => setEditName(e.target.value)}
                   maxLength={32}
                   autoFocus
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleSave()
+                    if (e.key === 'Escape') setIsEditing(false)
+                  }}
                 />
                 <button onClick={handleSave}>✓</button>
               </div>
             ) : (
               <>
+                <span className="device-icon">{getDeviceIcon(player.device)}</span>
                 <span className="status-dot" />
                 <span className="name">{player.name}</span>
                 {player.identity === identity && (

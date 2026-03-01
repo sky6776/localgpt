@@ -1322,6 +1322,9 @@ fn handle_entity_info(
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: dl.illuminance,
             shadows: dl.shadows_enabled,
+            range: None,
+            outer_angle: None,
+            inner_angle: None,
         })
     } else if let Ok(pl) = point_lights.get(entity) {
         let c = pl.color.to_srgba();
@@ -1330,6 +1333,9 @@ fn handle_entity_info(
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: pl.intensity,
             shadows: pl.shadows_enabled,
+            range: Some(pl.range),
+            outer_angle: None,
+            inner_angle: None,
         })
     } else if let Ok(sl) = spot_lights.get(entity) {
         let c = sl.color.to_srgba();
@@ -1338,6 +1344,9 @@ fn handle_entity_info(
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: sl.intensity,
             shadows: sl.shadows_enabled,
+            range: Some(sl.range),
+            outer_angle: Some(sl.outer_angle),
+            inner_angle: Some(sl.inner_angle),
         })
     } else {
         None

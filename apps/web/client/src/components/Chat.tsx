@@ -7,6 +7,7 @@ interface ChatMessage {
   senderName: string
   message: string
   timestamp: bigint
+  msgType: string
 }
 
 interface ChatProps {
@@ -38,16 +39,22 @@ export function Chat({ messages, identity, onSend }: ChatProps) {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
+  const filteredMessages = messages.filter(m => m.msgType === 'chat' || m.msgType === 'system')
+
   return (
     <div className="chat">
       <div className="chat-messages" ref={listRef}>
-        {messages.map(msg => (
+        {filteredMessages.map(msg => (
           <div
             key={msg.id}
-            className={`chat-message ${msg.senderIdentity === identity ? 'self' : ''}`}
+            className={`chat-message ${msg.senderIdentity === identity ? 'self' : ''} ${msg.msgType}`}
           >
-            <span className="time">{formatTime(msg.timestamp)}</span>
-            <span className="sender">{msg.senderName}:</span>
+            {msg.msgType !== 'system' && (
+              <>
+                <span className="time">{formatTime(msg.timestamp)}</span>
+                <span className="sender">{msg.senderName}:</span>
+              </>
+            )}
             <span className="text">{msg.message}</span>
           </div>
         ))}

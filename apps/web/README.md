@@ -1,6 +1,6 @@
-# LocalGPT World - SpacetimeDB Multiplayer
+# LocalGPT World - Web Client
 
-A multiplayer 3D world powered by SpacetimeDB and React Three Fiber.
+A multiplayer 3D world web client using React Three Fiber. Connects to the SpacetimeDB server in `crates/spacetime/`.
 
 ## Structure
 
@@ -11,16 +11,25 @@ apps/web/
 │       ├── components/   # React components
 │       ├── hooks/        # SpacetimeDB hooks
 │       └── pages/        # Route pages
-├── server/           # SpacetimeDB Rust module
-│   └── src/lib.rs    # Tables, reducers, world gen
-└── shared/           # Generated TypeScript bindings
+
+crates/spacetime/     # SpacetimeDB Rust module (backend)
 ```
+
+## Shared Types with Gen Crate
+
+The server reuses types from `crates/world-types`:
+
+- `EntityId`, `EntityName`, `EntityRef` — Identity types
+- `WorldEntity`, `WorldTransform` — Entity structure
+- `Shape` — Parametric shapes (Cuboid, Sphere, etc.)
+- `MaterialDef`, `LightDef`, `BehaviorDef`, `AudioDef` — Components
+- `ChunkCoord` — Spatial partitioning (64×64 chunks)
 
 ## Quick Start
 
 ### Prerequisites
 
-- [SpacetimeDB CLI](https://github.com/clockworklabs/SpacetimeDB) installed
+- [SpacetimeDB CLI](https://github.com/clockworklabs/SpacetimeDB) 2.0+
 - Node.js 18+ and npm
 - Rust 1.70+
 
@@ -31,7 +40,7 @@ apps/web/
 spacetime start
 
 # In another terminal, publish the module
-cd apps/web/server
+cd crates/spacetime
 spacetime publish --server local localgpt-world
 ```
 
@@ -67,21 +76,41 @@ npm run build
 
 ### SpacetimeDB Tables
 
-- **player** - Connected players with position
-- **world_entity** - Generated world objects (trees, rocks, buildings)
-- **chat_message** - Chat history
-- **world_info** - World metadata (seed, size)
-
-### Reducers
-
-- `move_player(x, y, z, rotation)` - Update player position
-- `send_chat(message)` - Send chat message
-- `spawn_entity(...)` - Add new world entity
-- `regenerate_world(seed)` - Regenerate world
+| Table | Purpose |
+|-------|---------|
+| `player` | Connected players with position, device type |
+| `world_entity` | World objects with serialized components |
+| `chat_message` | Chat and system messages |
+| `world_info` | World metadata (seed, size, timestamps) |
+| `chunk_subscription` | Mobile streaming subscriptions |
+| `entity_counter` | Auto-increment ID counter |
 
 ### Client Stack
 
-- **React** - UI framework
-- **Three.js / React Three Fiber** - 3D rendering
-- **Zustand** - State management
-- **SpacetimeDB SDK** - Real-time sync
+- **React 18** — UI framework
+- **Three.js / React Three Fiber** — 3D rendering
+- **@clockworklabs/spacetimedb-sdk 2.0** — Real-time sync
+- **Zustand** — State management
+
+### Mobile Support
+
+The SpacetimeDB server in `crates/spacetime/` supports mobile clients via:
+- Device type tracking (`web`, `ios`, `android`)
+- Chunk-based streaming for bandwidth efficiency
+- Lightweight position sync protocol
+
+## Integration with Gen Crate
+
+The gen crate (`crates/gen`) can sync worlds to SpacetimeDB:
+
+1. Gen creates `WorldEntity` instances
+2. Serialize to JSON: `serde_json::to_string(&entity)`
+3. Call `spawn_world_entity` reducer
+4. Changes sync to all connected clients
+
+## Environment Variables
+
+```bash
+VITE_SPACETIMEDB_URL=ws://localhost:3000
+VITE_MODULE_NAME=localgpt-world
+```
