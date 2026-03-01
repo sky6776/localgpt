@@ -384,6 +384,7 @@ fn process_gen_commands(
                             &params.directional_lights,
                             &params.point_lights,
                             &params.spot_lights,
+                            &params.behaviors_query,
                         )
                     })
                 });
@@ -430,6 +431,7 @@ fn process_gen_commands(
                             &params.directional_lights,
                             &params.point_lights,
                             &params.spot_lights,
+                            &params.behaviors_query,
                         )
                     })
                 });
@@ -448,13 +450,127 @@ fn process_gen_commands(
                 resp
             }
             GenCommand::SetCamera(cmd) => handle_set_camera(cmd, &mut commands, &params.registry),
-            GenCommand::SetLight(cmd) => handle_set_light(
-                cmd,
-                &mut commands,
-                &mut params.registry,
-                &mut params.next_entity_id,
-            ),
-            GenCommand::SetEnvironment(cmd) => handle_set_environment(cmd, &mut commands),
+            GenCommand::SetLight(cmd) => {
+                // Snapshot the old light before it gets despawned (for undo)
+                let old_light_snapshot =
+                    params
+                        .registry
+                        .get_entity(&cmd.name)
+                        .and_then(|old_ent| {
+                            params.registry.get_id(old_ent).map(|old_id| {
+                                snapshot_entity(
+                                    &cmd.name,
+                                    old_ent,
+                                    old_id,
+                                    &params.transforms,
+                                    &params.parametric_shapes,
+                                    &params.material_handles,
+                                    &params.materials,
+                                    &params.visibility_query,
+                                    &params.directional_lights,
+                                    &params.point_lights,
+                                    &params.spot_lights,
+                                    &params.behaviors_query,
+                                )
+                            })
+                        });
+                let resp = handle_set_light(
+                    cmd,
+                    &mut commands,
+                    &mut params.registry,
+                    &mut params.next_entity_id,
+                );
+                // Record undo: if we replaced an old light, use batch to restore it
+                if let GenResponse::LightSet { ref name } = resp
+                    && let Some(new_ent) = params.registry.get_entity(name)
+                    && let Some(new_id) = params.registry.get_id(new_ent)
+                {
+                    let new_we = snapshot_entity(
+                        name,
+                        new_ent,
+                        new_id,
+                        &params.transforms,
+                        &params.parametric_shapes,
+                        &params.material_handles,
+                        &params.materials,
+                        &params.visibility_query,
+                        &params.directional_lights,
+                        &params.point_lights,
+                        &params.spot_lights,
+                        &params.behaviors_query,
+                    );
+                    params.dirty_tracker.mark_dirty(new_id);
+                    if let Some(old_we) = old_light_snapshot {
+                        // Replacing existing light: undo restores old, redo re-applies new
+                        let old_id = old_we.id;
+                        params.undo_stack.history.push(
+                            wt::EditOp::Batch {
+                                ops: vec![
+                                    wt::EditOp::delete(new_id),
+                                    wt::EditOp::spawn(new_we),
+                                ],
+                            },
+                            wt::EditOp::Batch {
+                                ops: vec![
+                                    wt::EditOp::delete(old_id),
+                                    wt::EditOp::spawn(old_we),
+                                ],
+                            },
+                            None,
+                        );
+                    } else {
+                        // New light: undo is simply delete
+                        params.undo_stack.history.push(
+                            wt::EditOp::spawn(new_we),
+                            wt::EditOp::delete(new_id),
+                            None,
+                        );
+                    }
+                }
+                resp
+            }
+            GenCommand::SetEnvironment(cmd) => {
+                // Capture current environment for undo
+                let old_env = {
+                    let bg = params.clear_color.as_ref().map(|cc| {
+                        let c = cc.0.to_srgba();
+                        [c.red, c.green, c.blue, c.alpha]
+                    });
+                    let (ambient_intensity, ambient_color) =
+                        params.ambient_light.as_ref().map_or((None, None), |al| {
+                            let c = al.color.to_srgba();
+                            (
+                                Some(al.brightness),
+                                Some([c.red, c.green, c.blue, c.alpha]),
+                            )
+                        });
+                    wt::EnvironmentDef {
+                        background_color: bg,
+                        ambient_intensity,
+                        ambient_color,
+                        fog_density: None,
+                        fog_color: None,
+                    }
+                };
+                // Build new env from the command (can't read resources after
+                // deferred commands since they haven't been applied yet)
+                let new_env = wt::EnvironmentDef {
+                    background_color: cmd.background_color,
+                    ambient_intensity: cmd.ambient_light,
+                    ambient_color: cmd.ambient_color,
+                    fog_density: None,
+                    fog_color: None,
+                };
+                let resp = handle_set_environment(cmd, &mut commands);
+                if let GenResponse::EnvironmentSet = &resp {
+                    params.undo_stack.history.push(
+                        wt::EditOp::SetEnvironment { env: new_env },
+                        wt::EditOp::SetEnvironment { env: old_env },
+                        None,
+                    );
+                }
+                resp
+            }
             GenCommand::SpawnMesh(cmd) => handle_spawn_mesh(
                 cmd,
                 &mut commands,
@@ -539,23 +655,133 @@ fn process_gen_commands(
             GenCommand::AudioInfo => audio::handle_audio_info(&params.audio_engine),
 
             // Behavior commands
-            GenCommand::AddBehavior(cmd) => behaviors::handle_add_behavior(
-                cmd,
-                &mut params.behavior_state,
-                &mut commands,
-                &params.registry,
-                &params.transforms,
-                &mut params.behaviors_query,
-            ),
+            GenCommand::AddBehavior(cmd) => {
+                // Snapshot before adding behavior for undo
+                let pre_snapshot =
+                    params
+                        .registry
+                        .get_entity(&cmd.entity)
+                        .and_then(|e| {
+                            params.registry.get_id(e).map(|id| {
+                                snapshot_entity(
+                                    &cmd.entity,
+                                    e,
+                                    id,
+                                    &params.transforms,
+                                    &params.parametric_shapes,
+                                    &params.material_handles,
+                                    &params.materials,
+                                    &params.visibility_query,
+                                    &params.directional_lights,
+                                    &params.point_lights,
+                                    &params.spot_lights,
+                                    &params.behaviors_query,
+                                )
+                            })
+                        });
+                let entity_name = cmd.entity.clone();
+                let resp = behaviors::handle_add_behavior(
+                    cmd,
+                    &mut params.behavior_state,
+                    &mut commands,
+                    &params.registry,
+                    &params.transforms,
+                    &mut params.behaviors_query,
+                );
+                if let GenResponse::BehaviorAdded { .. } = &resp
+                    && let Some(old_we) = pre_snapshot
+                    && let Some(e) = params.registry.get_entity(&entity_name)
+                    && let Some(id) = params.registry.get_id(e)
+                {
+                    let new_we = snapshot_entity(
+                        &entity_name,
+                        e,
+                        id,
+                        &params.transforms,
+                        &params.parametric_shapes,
+                        &params.material_handles,
+                        &params.materials,
+                        &params.visibility_query,
+                        &params.directional_lights,
+                        &params.point_lights,
+                        &params.spot_lights,
+                        &params.behaviors_query,
+                    );
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch {
+                            ops: vec![wt::EditOp::delete(id), wt::EditOp::spawn(new_we)],
+                        },
+                        wt::EditOp::Batch {
+                            ops: vec![wt::EditOp::delete(id), wt::EditOp::spawn(old_we)],
+                        },
+                        None,
+                    );
+                }
+                resp
+            }
             GenCommand::RemoveBehavior {
                 entity,
                 behavior_id,
-            } => behaviors::handle_remove_behavior(
-                &entity,
-                behavior_id.as_deref(),
-                &params.registry,
-                &mut params.behaviors_query,
-            ),
+            } => {
+                // Snapshot before removing behavior for undo
+                let pre_snapshot =
+                    params.registry.get_entity(&entity).and_then(|e| {
+                        params.registry.get_id(e).map(|id| {
+                            snapshot_entity(
+                                &entity,
+                                e,
+                                id,
+                                &params.transforms,
+                                &params.parametric_shapes,
+                                &params.material_handles,
+                                &params.materials,
+                                &params.visibility_query,
+                                &params.directional_lights,
+                                &params.point_lights,
+                                &params.spot_lights,
+                                &params.behaviors_query,
+                            )
+                        })
+                    });
+                let entity_name = entity.clone();
+                let resp = behaviors::handle_remove_behavior(
+                    &entity,
+                    behavior_id.as_deref(),
+                    &params.registry,
+                    &mut params.behaviors_query,
+                );
+                if let GenResponse::BehaviorRemoved { count, .. } = &resp
+                    && *count > 0
+                    && let Some(old_we) = pre_snapshot
+                    && let Some(e) = params.registry.get_entity(&entity_name)
+                    && let Some(id) = params.registry.get_id(e)
+                {
+                    let new_we = snapshot_entity(
+                        &entity_name,
+                        e,
+                        id,
+                        &params.transforms,
+                        &params.parametric_shapes,
+                        &params.material_handles,
+                        &params.materials,
+                        &params.visibility_query,
+                        &params.directional_lights,
+                        &params.point_lights,
+                        &params.spot_lights,
+                        &params.behaviors_query,
+                    );
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch {
+                            ops: vec![wt::EditOp::delete(id), wt::EditOp::spawn(new_we)],
+                        },
+                        wt::EditOp::Batch {
+                            ops: vec![wt::EditOp::delete(id), wt::EditOp::spawn(old_we)],
+                        },
+                        None,
+                    );
+                }
+                resp
+            }
             GenCommand::ListBehaviors { entity } => behaviors::handle_list_behaviors(
                 entity.as_deref(),
                 &params.behavior_state,
@@ -748,7 +974,7 @@ fn process_gen_commands(
 
         // Mark entities dirty and record undo history.
         match &response {
-            GenResponse::Spawned { name, .. } | GenResponse::LightSet { name } => {
+            GenResponse::Spawned { name, .. } => {
                 if let Some(bevy_ent) = params.registry.get_entity(name)
                     && let Some(id) = params.registry.get_id(bevy_ent)
                 {
@@ -766,6 +992,7 @@ fn process_gen_commands(
                         &params.directional_lights,
                         &params.point_lights,
                         &params.spot_lights,
+                        &params.behaviors_query,
                     );
                     params.undo_stack.history.push(
                         wt::EditOp::spawn(we),
@@ -1863,6 +2090,7 @@ fn snapshot_entity(
     directional_lights: &Query<&DirectionalLight>,
     point_lights: &Query<&PointLight>,
     spot_lights: &Query<&SpotLight>,
+    behaviors_query: &Query<&mut EntityBehaviors>,
 ) -> wt::WorldEntity {
     let mut we = wt::WorldEntity::new(id.0, name);
 
@@ -1936,6 +2164,15 @@ fn snapshot_entity(
             direction: dir,
             shadows: sl.shadows_enabled,
         });
+    }
+
+    // Behaviors
+    if let Ok(eb) = behaviors_query.get(entity) {
+        we.behaviors = eb
+            .behaviors
+            .iter()
+            .map(|bi| wt::BehaviorDef::from(&bi.def))
+            .collect();
     }
 
     we
@@ -2014,6 +2251,25 @@ fn apply_edit_op(
         }
         wt::EditOp::ModifyEntity { id, .. } => {
             format!("modify undo for entity {} not yet implemented", id.0)
+        }
+        wt::EditOp::SetEnvironment { env } => {
+            if let Some(color) = env.background_color {
+                commands.insert_resource(ClearColor(Color::srgba(
+                    color[0], color[1], color[2], color[3],
+                )));
+            }
+            if let Some(intensity) = env.ambient_intensity {
+                let color = env
+                    .ambient_color
+                    .map(|c| Color::srgba(c[0], c[1], c[2], c[3]))
+                    .unwrap_or(Color::WHITE);
+                commands.insert_resource(GlobalAmbientLight {
+                    color,
+                    brightness: intensity,
+                    affects_lightmapped_meshes: true,
+                });
+            }
+            "restored environment".to_string()
         }
         wt::EditOp::Batch { ops } => {
             let descriptions: Vec<String> = ops

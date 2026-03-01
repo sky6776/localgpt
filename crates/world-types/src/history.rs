@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityPatch, WorldEntity};
 use crate::identity::EntityId;
+use crate::world::EnvironmentDef;
 
 /// A recorded world edit with its inverse for undo support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +31,8 @@ pub enum EditOp {
     DeleteEntity { id: EntityId },
     /// Modify an entity with a patch.
     ModifyEntity { id: EntityId, patch: EntityPatch },
+    /// Set environment (background color, ambient light, fog).
+    SetEnvironment { env: EnvironmentDef },
     /// A batch of atomic operations (all-or-nothing).
     Batch { ops: Vec<EditOp> },
 }
