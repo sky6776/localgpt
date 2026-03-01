@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityPatch, WorldEntity};
 use crate::identity::EntityId;
-use crate::world::EnvironmentDef;
+use crate::world::{CameraDef, EnvironmentDef};
 
 /// A recorded world edit with its inverse for undo support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +33,8 @@ pub enum EditOp {
     ModifyEntity { id: EntityId, patch: EntityPatch },
     /// Set environment (background color, ambient light, fog).
     SetEnvironment { env: EnvironmentDef },
+    /// Set camera position, look-at target, and FOV.
+    SetCamera { camera: CameraDef },
     /// A batch of atomic operations (all-or-nothing).
     Batch { ops: Vec<EditOp> },
 }

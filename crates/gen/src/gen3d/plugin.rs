@@ -455,7 +455,59 @@ fn process_gen_commands(
                 }
                 resp
             }
-            GenCommand::SetCamera(cmd) => handle_set_camera(cmd, &mut commands, &params.registry),
+            GenCommand::SetCamera(cmd) => {
+                // Capture old camera state for undo
+                let old_camera = params.registry.get_entity("main_camera").map(|cam_ent| {
+                    let pos = params
+                        .transforms
+                        .get(cam_ent)
+                        .map(|t| t.translation.to_array())
+                        .unwrap_or([5.0, 5.0, 5.0]);
+                    let fov = params
+                        .projections
+                        .get(cam_ent)
+                        .ok()
+                        .and_then(|p| match p {
+                            Projection::Perspective(pp) => Some(pp.fov.to_degrees()),
+                            _ => None,
+                        })
+                        .unwrap_or(45.0);
+                    // Compute look_at from current forward direction
+                    let forward = params
+                        .transforms
+                        .get(cam_ent)
+                        .map(|t| t.forward().as_vec3())
+                        .unwrap_or(Vec3::NEG_Z);
+                    let look_at = params
+                        .transforms
+                        .get(cam_ent)
+                        .map(|t| (t.translation + forward * 10.0).to_array())
+                        .unwrap_or([0.0, 0.0, 0.0]);
+                    wt::CameraDef {
+                        position: pos,
+                        look_at,
+                        fov_degrees: fov,
+                    }
+                });
+                let new_camera = wt::CameraDef {
+                    position: cmd.position,
+                    look_at: cmd.look_at,
+                    fov_degrees: cmd.fov_degrees,
+                };
+                let resp = handle_set_camera(cmd, &mut commands, &params.registry);
+                if let GenResponse::CameraSet = &resp {
+                    if let Some(old_cam) = old_camera {
+                        params.undo_stack.history.push(
+                            wt::EditOp::SetCamera {
+                                camera: new_camera,
+                            },
+                            wt::EditOp::SetCamera { camera: old_cam },
+                            None,
+                        );
+                    }
+                }
+                resp
+            }
             GenCommand::SetLight(cmd) => {
                 // Snapshot the old light before it gets despawned (for undo)
                 let old_light_snapshot =
@@ -942,6 +994,43 @@ fn process_gen_commands(
                 keep_camera,
                 keep_lights,
             } => {
+                // Snapshot all entities before clearing for undo
+                let mut pre_snapshots = Vec::new();
+                let all_names: Vec<(String, bevy::ecs::entity::Entity)> = params
+                    .registry
+                    .all_names()
+                    .map(|(n, e)| (n.to_string(), e))
+                    .collect();
+                for (name, ent) in &all_names {
+                    if name == "main_camera" && keep_camera {
+                        continue;
+                    }
+                    if let Some(id) = params.registry.get_id(*ent) {
+                        // Check if this is a light entity (skip if keep_lights)
+                        if keep_lights
+                            && (params.directional_lights.get(*ent).is_ok()
+                                || params.point_lights.get(*ent).is_ok()
+                                || params.spot_lights.get(*ent).is_ok())
+                        {
+                            continue;
+                        }
+                        pre_snapshots.push(snapshot_entity(
+                            name,
+                            *ent,
+                            id,
+                            &params.transforms,
+                            &params.parametric_shapes,
+                            &params.material_handles,
+                            &params.materials,
+                            &params.visibility_query,
+                            &params.directional_lights,
+                            &params.point_lights,
+                            &params.spot_lights,
+                            &params.behaviors_query,
+                        ));
+                    }
+                }
+
                 let resp = handle_clear_scene(
                     keep_camera,
                     keep_lights,
@@ -952,6 +1041,26 @@ fn process_gen_commands(
                     &mut params.behavior_state,
                     &mut params.pending_world,
                 );
+
+                if let GenResponse::SceneCleared { .. } = &resp
+                    && !pre_snapshots.is_empty()
+                {
+                    // Forward: delete all entities; Inverse: re-spawn them all
+                    let forward_ops: Vec<wt::EditOp> = pre_snapshots
+                        .iter()
+                        .map(|we| wt::EditOp::delete(we.id))
+                        .collect();
+                    let inverse_ops: Vec<wt::EditOp> = pre_snapshots
+                        .into_iter()
+                        .map(wt::EditOp::spawn)
+                        .collect();
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch { ops: forward_ops },
+                        wt::EditOp::Batch { ops: inverse_ops },
+                        None,
+                    );
+                }
+
                 // Avatar and tours are world-level metadata (not individual entities),
                 // so they are always reset — a new world will provide its own.
                 params.avatar_config.active = None;
@@ -2311,8 +2420,30 @@ fn apply_edit_op(
             );
             format!("re-spawned '{}'", name)
         }
-        wt::EditOp::ModifyEntity { id, .. } => {
-            format!("modify undo for entity {} not yet implemented", id.0)
+        wt::EditOp::ModifyEntity { id, patch } => {
+            if let Some(entity) = registry.get_entity_by_id(id) {
+                let name = registry.get_name(entity).unwrap_or("unknown").to_string();
+                // Build a minimal WorldEntity from what we know, apply the patch,
+                // then delete-and-respawn to apply all changes atomically.
+                let mut we = wt::WorldEntity::new(id.0, &name);
+                patch.apply(&mut we);
+                // Delete old
+                registry.remove_by_entity(entity);
+                commands.entity(entity).despawn();
+                // Spawn patched version
+                spawn_world_entities(
+                    std::slice::from_ref(&we),
+                    commands,
+                    meshes,
+                    materials,
+                    registry,
+                    next_entity_id,
+                    behavior_state,
+                );
+                format!("modified '{}'", name)
+            } else {
+                format!("entity id {} not found for modify", id.0)
+            }
         }
         wt::EditOp::SetEnvironment { env } => {
             if let Some(color) = env.background_color {
@@ -2332,6 +2463,22 @@ fn apply_edit_op(
                 });
             }
             "restored environment".to_string()
+        }
+        wt::EditOp::SetCamera { camera } => {
+            if let Some(cam_entity) = registry.get_entity("main_camera") {
+                let transform = Transform::from_translation(Vec3::from_array(camera.position))
+                    .looking_at(Vec3::from_array(camera.look_at), Vec3::Y);
+                commands.entity(cam_entity).insert(transform);
+                commands
+                    .entity(cam_entity)
+                    .insert(Projection::Perspective(PerspectiveProjection {
+                        fov: camera.fov_degrees.to_radians(),
+                        ..default()
+                    }));
+                "restored camera".to_string()
+            } else {
+                "main_camera not found".to_string()
+            }
         }
         wt::EditOp::Batch { ops } => {
             let descriptions: Vec<String> = ops
