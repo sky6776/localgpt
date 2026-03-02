@@ -1904,7 +1904,16 @@ fn handle_spawn_mesh(
         .spawn((
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(material),
-            Transform::from_translation(Vec3::from_array(cmd.position)),
+            Transform {
+                translation: Vec3::from_array(cmd.position),
+                rotation: Quat::from_euler(
+                    EulerRot::XYZ,
+                    cmd.rotation_degrees[0].to_radians(),
+                    cmd.rotation_degrees[1].to_radians(),
+                    cmd.rotation_degrees[2].to_radians(),
+                ),
+                scale: Vec3::from_array(cmd.scale),
+            },
             Name::new(cmd.name.clone()),
             GenEntity {
                 entity_type: GenEntityType::Mesh,
@@ -1914,6 +1923,13 @@ fn handle_spawn_mesh(
         .id();
 
     registry.insert_with_id(cmd.name.clone(), entity, wid);
+
+    // Parent
+    if let Some(ref parent_name) = cmd.parent
+        && let Some(parent_entity) = registry.get_entity(parent_name)
+    {
+        commands.entity(entity).set_parent_in_place(parent_entity);
+    }
 
     GenResponse::Spawned {
         name: cmd.name,

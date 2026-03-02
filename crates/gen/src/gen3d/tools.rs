@@ -858,6 +858,22 @@ impl Tool for GenSpawnMeshTool {
                         "items": {"type": "number"},
                         "default": [0, 0, 0],
                         "description": "World position [x, y, z]"
+                    },
+                    "rotation_degrees": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "default": [0, 0, 0],
+                        "description": "Euler angles in degrees (pitch, yaw, roll)"
+                    },
+                    "scale": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "default": [1, 1, 1],
+                        "description": "Scale [x, y, z]"
+                    },
+                    "parent": {
+                        "type": "string",
+                        "description": "Name of parent entity for hierarchy. Omit for root-level."
                     }
                 },
                 "required": ["name", "vertices", "indices"]
@@ -905,6 +921,9 @@ impl Tool for GenSpawnMeshTool {
             metallic: args["metallic"].as_f64().unwrap_or(0.0) as f32,
             roughness: args["roughness"].as_f64().unwrap_or(0.5) as f32,
             position: parse_f32_array(&args["position"], [0.0, 0.0, 0.0]),
+            rotation_degrees: parse_f32_array(&args["rotation_degrees"], [0.0, 0.0, 0.0]),
+            scale: parse_f32_array(&args["scale"], [1.0, 1.0, 1.0]),
+            parent: args["parent"].as_str().map(|s| s.to_string()),
         };
 
         match self.bridge.send(GenCommand::SpawnMesh(cmd)).await? {

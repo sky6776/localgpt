@@ -213,6 +213,11 @@ pub struct RawMeshCmd {
     pub roughness: f32,
     #[serde(default)]
     pub position: [f32; 3],
+    #[serde(default)]
+    pub rotation_degrees: [f32; 3],
+    #[serde(default = "default_scale")]
+    pub scale: [f32; 3],
+    pub parent: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
