@@ -793,6 +793,8 @@ pub struct LightInfoData {
     pub intensity: f32,
     pub shadows: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub range: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outer_angle: Option<f32>,

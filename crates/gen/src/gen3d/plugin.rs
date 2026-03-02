@@ -1403,11 +1403,13 @@ fn handle_entity_info(
 
     let light_info = if let Ok(dl) = directional_lights.get(entity) {
         let c = dl.color.to_srgba();
+        let dir = transform.forward().as_vec3().to_array();
         Some(LightInfoData {
             light_type: "directional".to_string(),
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: dl.illuminance,
             shadows: dl.shadows_enabled,
+            direction: Some(dir),
             range: None,
             outer_angle: None,
             inner_angle: None,
@@ -1419,17 +1421,20 @@ fn handle_entity_info(
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: pl.intensity,
             shadows: pl.shadows_enabled,
+            direction: None,
             range: Some(pl.range),
             outer_angle: None,
             inner_angle: None,
         })
     } else if let Ok(sl) = spot_lights.get(entity) {
         let c = sl.color.to_srgba();
+        let dir = transform.forward().as_vec3().to_array();
         Some(LightInfoData {
             light_type: "spot".to_string(),
             color: [c.red, c.green, c.blue, c.alpha],
             intensity: sl.intensity,
             shadows: sl.shadows_enabled,
+            direction: Some(dir),
             range: Some(sl.range),
             outer_angle: Some(sl.outer_angle),
             inner_angle: Some(sl.inner_angle),
