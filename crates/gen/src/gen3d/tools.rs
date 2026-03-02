@@ -341,7 +341,10 @@ impl Tool for GenSpawnPrimitiveTool {
             metallic: args["metallic"].as_f64().unwrap_or(0.0) as f32,
             roughness: args["roughness"].as_f64().unwrap_or(0.5) as f32,
             emissive: parse_f32_4(&args["emissive"], [0.0, 0.0, 0.0, 0.0]),
-            alpha_mode: args.get("alpha_mode").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            alpha_mode: args
+                .get("alpha_mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             unlit: args.get("unlit").and_then(|v| v.as_bool()),
             parent: args["parent"].as_str().map(|s| s.to_string()),
         };
@@ -468,7 +471,10 @@ impl Tool for GenModifyEntityTool {
                 .map(|s| s.to_string()),
             unlit: args.get("unlit").and_then(|v| v.as_bool()),
             double_sided: args.get("double_sided").and_then(|v| v.as_bool()),
-            reflectance: args.get("reflectance").and_then(|v| v.as_f64()).map(|v| v as f32),
+            reflectance: args
+                .get("reflectance")
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32),
             visible: args["visible"].as_bool(),
             parent: if args.get("parent").is_some() {
                 Some(args["parent"].as_str().map(|s| s.to_string()))

@@ -1320,7 +1320,16 @@ fn handle_entity_info(
         .ok()
         .map(|p| p.shape.kind().to_string());
 
-    let (color, metallic, roughness, emissive, alpha_mode_str, unlit_val, double_sided_val, reflectance_val) = material_handles
+    let (
+        color,
+        metallic,
+        roughness,
+        emissive,
+        alpha_mode_str,
+        unlit_val,
+        double_sided_val,
+        reflectance_val,
+    ) = material_handles
         .get(entity)
         .ok()
         .and_then(|h| material_assets.get(&h.0))
@@ -1452,10 +1461,7 @@ fn handle_entity_info(
         light: light_info,
         children,
         parent,
-        mesh_asset: gltf_sources
-            .get(entity)
-            .ok()
-            .map(|s| s.path.clone()),
+        mesh_asset: gltf_sources.get(entity).ok().map(|s| s.path.clone()),
         audio: audio_engine
             .emitter_meta
             .get(name)
