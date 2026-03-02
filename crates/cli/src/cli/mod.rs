@@ -17,6 +17,7 @@ pub mod memory;
 pub mod paths;
 pub mod sandbox;
 pub mod search;
+pub mod tui;
 
 use clap::{Parser, Subcommand};
 
@@ -55,6 +56,9 @@ pub struct Cli {
 pub enum Commands {
     /// Start an interactive chat session
     Chat(chat::ChatArgs),
+
+    /// Launch the Ratatui TUI
+    Tui(tui::TuiArgs),
 
     /// Ask a single question
     Ask(ask::AskArgs),

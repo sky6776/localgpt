@@ -89,6 +89,7 @@ async fn async_main(cli: Cli) -> Result<()> {
 
     match cli.command {
         Commands::Chat(args) => crate::cli::chat::run(args, &cli.agent).await,
+        Commands::Tui(args) => crate::cli::tui::run(args, &cli.agent).await,
         Commands::Ask(args) => crate::cli::ask::run(args, &cli.agent).await,
         #[cfg(feature = "desktop")]
         Commands::Desktop(args) => crate::cli::desktop::run(args, &cli.agent),

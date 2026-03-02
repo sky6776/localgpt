@@ -2724,7 +2724,13 @@ impl GeminiCliProvider {
 
         // First attempt: try with existing session if available
         if let Some(cli_sid) = existing_session {
-            let args = self.build_cli_args(prompt, system_prompt, Some(cli_sid), false);
+            let args = self.build_cli_args_with_format(
+                prompt,
+                system_prompt,
+                Some(cli_sid),
+                false,
+                "json",
+            );
 
             debug!(
                 "Gemini CLI (resume): {} {:?} (cwd: {:?})",
@@ -2769,7 +2775,7 @@ impl GeminiCliProvider {
         }
 
         // Create new session
-        let args = self.build_cli_args(prompt, system_prompt, None, true);
+        let args = self.build_cli_args_with_format(prompt, system_prompt, None, true, "json");
 
         debug!(
             "Gemini CLI (new): {} {:?} (cwd: {:?})",
@@ -2798,12 +2804,13 @@ impl GeminiCliProvider {
     }
 
     /// Build CLI arguments for a command
-    fn build_cli_args(
+    fn build_cli_args_with_format(
         &self,
         prompt: &str,
         system_prompt: Option<&str>,
         resume_session: Option<&str>,
         is_new_session: bool,
+        output_format: &str,
     ) -> Vec<String> {
         let mut args = vec![
             "-p".to_string(),
@@ -2814,7 +2821,7 @@ impl GeminiCliProvider {
                 prompt.to_string()
             },
             "--output-format".to_string(),
-            "json".to_string(),   // Always use json for now
+            output_format.to_string(),
             "--yolo".to_string(), // Auto-accept actions (skip permissions)
         ];
 
@@ -2943,22 +2950,191 @@ impl LLMProvider for GeminiCliProvider {
     async fn chat_stream(
         &self,
         messages: &[Message],
-        tools: Option<&[ToolSchema]>,
+        _tools: Option<&[ToolSchema]>,
     ) -> Result<StreamResult> {
-        // Emulate streaming by calling chat() and yielding one chunk
-        let response = self.chat(messages, tools).await?;
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
-        let text = match response.content {
-            LLMResponseContent::Text(t) => t,
-            _ => return Err(anyhow::anyhow!("Unexpected non-text response")),
+        let prompt = build_prompt_from_messages(messages);
+        let system_prompt = extract_system_prompt(messages);
+
+        let current_cli_session = self
+            .cli_session_id
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Session lock poisoned: {}", e))?
+            .clone();
+
+        let (resume_session, is_new_session) = if let Some(ref sid) = current_cli_session {
+            (Some(sid.clone()), false)
+        } else {
+            (None, true)
         };
 
+        let args = self.build_cli_args_with_format(
+            &prompt,
+            system_prompt.as_deref(),
+            resume_session.as_deref(),
+            is_new_session,
+            "stream-json",
+        );
+
+        debug!(
+            "Gemini CLI streaming: {} {:?} (cwd: {:?})",
+            self.command, args, self.workspace
+        );
+
+        let mut child = tokio::process::Command::new(&self.command)
+            .args(&args)
+            .current_dir(&self.workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn Gemini CLI: {}", e))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to capture stdout"))?;
+
+        let cli_session_id = self.cli_session_id.lock().ok().and_then(|g| g.clone());
+        let session_key = self.session_key.clone();
+        let localgpt_session_id = self.localgpt_session_id.clone();
+        let cli_session_mutex = std::sync::Arc::new(StdMutex::new(cli_session_id));
+
         let stream = async_stream::stream! {
-            yield Ok(StreamChunk {
-                delta: text,
-                done: true,
-                tool_calls: None,
-            });
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let mut session_id_captured: Option<String> = None;
+            let mut shown_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut pending_tools: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.is_empty() {
+                    continue;
+                }
+
+                if let Ok(json) = serde_json::from_str::<Value>(&line) {
+                    let event_type = json["type"].as_str().unwrap_or("");
+
+                    match event_type {
+                        "init" => {
+                            if let Some(model) = json.get("model").and_then(|v| v.as_str()) {
+                                yield Ok(StreamChunk {
+                                    delta: format!("[Model: {}]\n", model),
+                                    done: false,
+                                    tool_calls: None,
+                                });
+                            }
+                            if let Some(sid) = json.get("session_id").and_then(|v| v.as_str()) {
+                                session_id_captured = Some(sid.to_string());
+                                if let Ok(mut guard) = cli_session_mutex.lock() {
+                                    *guard = Some(sid.to_string());
+                                }
+                                if let Err(e) = save_cli_session_to_store(
+                                    &session_key,
+                                    &localgpt_session_id,
+                                    GEMINI_CLI_PROVIDER,
+                                    sid,
+                                ) {
+                                    debug!("Failed to persist CLI session: {}", e);
+                                }
+                            }
+                        }
+                        "message" => {
+                            let role = json.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                            if role == "assistant" {
+                                if let Some(content) = json.get("content").and_then(|v| v.as_str()) {
+                                    yield Ok(StreamChunk {
+                                        delta: content.to_string(),
+                                        done: false,
+                                        tool_calls: None,
+                                    });
+                                }
+                            }
+                        }
+                        "tool_use" => {
+                            let tool_name = json.get("tool_name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                            let tool_id = json.get("tool_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                            if !shown_tool_ids.contains(&tool_id) {
+                                shown_tool_ids.insert(tool_id.clone());
+                                pending_tools.insert(tool_id, tool_name.clone());
+
+                                let params = json.get("parameters");
+                                let detail = match tool_name.as_str() {
+                                    "Bash" => params.and_then(|p| p.get("command")).and_then(|v| v.as_str()).map(|s| {
+                                        if s.len() > 60 { format!("{}...", &s[..s.floor_char_boundary(57)]) } else { s.to_string() }
+                                    }),
+                                    "Read" | "Edit" | "Write" => params.and_then(|p| p.get("file_path").or_else(|| p.get("path"))).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                    "Grep" | "Glob" => params.and_then(|p| p.get("pattern")).and_then(|v| v.as_str()).map(|s| format!("\"{}\"", s)),
+                                    "WebFetch" => params.and_then(|p| p.get("url")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                    "Task" => params.and_then(|p| p.get("description")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                    _ => None,
+                                };
+
+                                let tool_msg = if let Some(d) = detail {
+                                    format!("\n[{}: {}]", tool_name, d)
+                                } else {
+                                    format!("\n[{}]", tool_name)
+                                };
+
+                                yield Ok(StreamChunk {
+                                    delta: tool_msg,
+                                    done: false,
+                                    tool_calls: None,
+                                });
+                            }
+                        }
+                        "tool_result" => {
+                            let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("success");
+                            let result_status = if status == "error" { "failed" } else { "done" };
+                            let tool_id = json.get("tool_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let _tool_name = pending_tools.remove(tool_id);
+
+                            yield Ok(StreamChunk {
+                                delta: format!(" [{}]\n", result_status),
+                                done: false,
+                                tool_calls: None,
+                            });
+                        }
+                        "result" => {
+                            yield Ok(StreamChunk {
+                                delta: String::new(),
+                                done: true,
+                                tool_calls: None,
+                            });
+                        }
+                        "error" => {
+                            let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+                            yield Err(anyhow::anyhow!("Gemini CLI error: {}", msg));
+                        }
+                        _ => {
+                            debug!("Ignoring Gemini CLI stream event: {}", event_type);
+                        }
+                    }
+                }
+            }
+
+            match child.wait().await {
+                Ok(status) if !status.success() => {
+                    if let Some(mut stderr) = child.stderr.take() {
+                        let mut error_buf = String::new();
+                        use tokio::io::AsyncReadExt;
+                        let _ = stderr.read_to_string(&mut error_buf).await;
+                        if !error_buf.is_empty() {
+                            yield Err(anyhow::anyhow!("Gemini CLI failed: {}", error_buf));
+                        }
+                    }
+                }
+                Err(e) => {
+                    yield Err(anyhow::anyhow!("Failed to wait for Gemini CLI process: {}", e));
+                }
+                _ => {}
+            }
+
+            if let Some(ref new_sid) = session_id_captured {
+                info!("Gemini CLI streaming session: {}", new_sid);
+            }
         };
 
         Ok(Box::pin(stream))
@@ -3244,21 +3420,213 @@ impl LLMProvider for CodexCliProvider {
     async fn chat_stream(
         &self,
         messages: &[Message],
-        tools: Option<&[ToolSchema]>,
+        _tools: Option<&[ToolSchema]>,
     ) -> Result<StreamResult> {
-        let response = self.chat(messages, tools).await?;
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
-        let text = match response.content {
-            LLMResponseContent::Text(t) => t,
-            _ => return Err(anyhow::anyhow!("Unexpected non-text response")),
+        let prompt = build_prompt_from_messages(messages);
+        let system_prompt = extract_system_prompt(messages);
+
+        let current_cli_session = self
+            .cli_session_id
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Session lock poisoned: {}", e))?
+            .clone();
+
+        let mut args = vec!["exec".to_string()];
+        if current_cli_session.is_some() {
+            args.push("resume".to_string());
+        }
+        args.push("--json".to_string());
+
+        if !self.model.is_empty() {
+            args.push("--model".to_string());
+            args.push(self.model.clone());
+        }
+        args.push("--skip-git-repo-check".to_string());
+
+        if let Some(ref sid) = current_cli_session {
+            args.push(sid.to_string());
+        }
+
+        let effective_prompt = if let Some(sys) = system_prompt {
+            format!("{}\n\n{}", sys, prompt)
+        } else {
+            prompt.to_string()
         };
+        args.push(effective_prompt);
+
+        debug!(
+            "Codex CLI streaming: {} {:?} (cwd: {:?})",
+            self.command, args, self.workspace
+        );
+
+        let mut child = tokio::process::Command::new(&self.command)
+            .args(&args)
+            .current_dir(&self.workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn Codex CLI: {}", e))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to capture stdout"))?;
+
+        let cli_session_id = self.cli_session_id.lock().ok().and_then(|g| g.clone());
+        let session_key = self.session_key.clone();
+        let localgpt_session_id = self.localgpt_session_id.clone();
+        let cli_session_mutex = std::sync::Arc::new(StdMutex::new(cli_session_id));
 
         let stream = async_stream::stream! {
-            yield Ok(StreamChunk {
-                delta: text,
-                done: true,
-                tool_calls: None,
-            });
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let mut session_id_captured: Option<String> = None;
+            let mut shown_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut pending_tools: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.is_empty() {
+                    continue;
+                }
+
+                if let Ok(json) = serde_json::from_str::<Value>(&line) {
+                    // Extract event type based on the first key if it's an object wrapping the event
+                    // or if it has a type field (based on Codex CLI output format).
+                    // Looking at exec_events.rs, it uses #[serde(rename = "...")] on enum variants
+
+                    let event_type = if let Some(obj) = json.as_object() {
+                        if let Some(t) = obj.keys().next() {
+                            t.as_str()
+                        } else {
+                            ""
+                        }
+                    } else {
+                        ""
+                    };
+
+                    match event_type {
+                        "thread.started" => {
+                            if let Some(thread_id) = json.get("thread.started").and_then(|v| v.get("thread_id")).and_then(|v| v.as_str()) {
+                                session_id_captured = Some(thread_id.to_string());
+                                if let Ok(mut guard) = cli_session_mutex.lock() {
+                                    *guard = Some(thread_id.to_string());
+                                }
+                                if let Err(e) = save_cli_session_to_store(
+                                    &session_key,
+                                    &localgpt_session_id,
+                                    CODEX_CLI_PROVIDER,
+                                    thread_id,
+                                ) {
+                                    debug!("Failed to persist CLI session: {}", e);
+                                }
+                            }
+                        }
+                        "item.started" | "item.completed" | "item.updated" => {
+                            let item_event = json.get(event_type).unwrap();
+                            if let Some(item) = item_event.get("item") {
+                                let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let details = item.get("details");
+
+                                if let Some(details_obj) = details.and_then(|v| v.as_object()) {
+                                    let detail_type = details_obj.keys().next().map(|s| s.as_str()).unwrap_or("");
+                                    let detail_content = details_obj.get(detail_type);
+
+                                    match detail_type {
+                                        "AgentMessage" => {
+                                            // Handle agent message as it comes
+                                            if event_type == "item.completed" {
+                                                 if let Some(text) = detail_content.and_then(|v| v.get("text")).and_then(|v| v.as_str()) {
+                                                     yield Ok(StreamChunk {
+                                                         delta: text.to_string(),
+                                                         done: false,
+                                                         tool_calls: None,
+                                                     });
+                                                 }
+                                            }
+                                        }
+                                        "CommandExecution" | "McpToolCall" | "CollabToolCall" | "WebSearch" | "FileChange" => {
+                                            let tool_name = detail_type.to_string();
+
+                                            if event_type == "item.started" && !shown_tool_ids.contains(&id) {
+                                                shown_tool_ids.insert(id.clone());
+                                                pending_tools.insert(id.clone(), tool_name.clone());
+
+                                                let desc = match detail_type {
+                                                    "CommandExecution" => detail_content.and_then(|v| v.get("command")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                    "McpToolCall" => detail_content.and_then(|v| v.get("tool")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                    "FileChange" => Some("Files modified".to_string()),
+                                                    _ => None,
+                                                };
+
+                                                let tool_msg = if let Some(d) = desc {
+                                                    format!("\n[{}: {}]", tool_name, d)
+                                                } else {
+                                                    format!("\n[{}]", tool_name)
+                                                };
+
+                                                yield Ok(StreamChunk {
+                                                    delta: tool_msg,
+                                                    done: false,
+                                                    tool_calls: None,
+                                                });
+                                            } else if event_type == "item.completed" {
+                                                let status = detail_content.and_then(|v| v.get("status")).and_then(|v| v.as_str()).unwrap_or("completed");
+                                                let result_status = if status.eq_ignore_ascii_case("failed") { "failed" } else { "done" };
+                                                let _ = pending_tools.remove(&id);
+
+                                                yield Ok(StreamChunk {
+                                                    delta: format!(" [{}]\n", result_status),
+                                                    done: false,
+                                                    tool_calls: None,
+                                                });
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        "turn.completed" | "turn.failed" => {
+                            yield Ok(StreamChunk {
+                                delta: String::new(),
+                                done: true,
+                                tool_calls: None,
+                            });
+                        }
+                        "error" => {
+                            let msg = json.get("error").and_then(|v| v.get("message")).and_then(|v| v.as_str()).unwrap_or("Unknown error");
+                            yield Err(anyhow::anyhow!("Codex CLI error: {}", msg));
+                        }
+                        _ => {
+                            debug!("Ignoring Codex CLI stream event: {}", line);
+                        }
+                    }
+                }
+            }
+
+            match child.wait().await {
+                Ok(status) if !status.success() => {
+                    if let Some(mut stderr) = child.stderr.take() {
+                        let mut error_buf = String::new();
+                        use tokio::io::AsyncReadExt;
+                        let _ = stderr.read_to_string(&mut error_buf).await;
+                        if !error_buf.is_empty() {
+                            yield Err(anyhow::anyhow!("Codex CLI failed: {}", error_buf));
+                        }
+                    }
+                }
+                Err(e) => {
+                    yield Err(anyhow::anyhow!("Failed to wait for Codex CLI process: {}", e));
+                }
+                _ => {}
+            }
+
+            if let Some(ref new_sid) = session_id_captured {
+                info!("Codex CLI streaming session: {}", new_sid);
+            }
         };
 
         Ok(Box::pin(stream))

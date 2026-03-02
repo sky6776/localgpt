@@ -58,6 +58,8 @@ eframe = { version = "0.33", optional = true, default-features = false, features
     "x11",
     "wayland",
 ] }
+ratatui = "0.30.0"
+crossterm = "0.29.0"
 
 # Unix daemonization
 [target.'cfg(unix)'.dependencies]
