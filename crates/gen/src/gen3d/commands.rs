@@ -618,7 +618,7 @@ pub enum GenResponse {
     Screenshot {
         image_path: String,
     },
-    EntityInfo(EntityInfoData),
+    EntityInfo(Box<EntityInfoData>),
     Spawned {
         name: String,
         entity_id: u64,

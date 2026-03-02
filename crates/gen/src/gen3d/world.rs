@@ -165,6 +165,7 @@ pub fn handle_save_world(
     audio_engine: &AudioEngine,
     behaviors_query: &Query<&mut EntityBehaviors>,
     parametric_shapes: &Query<&ParametricShape>,
+    gltf_sources: &Query<&GltfSource>,
     visibility_query: &Query<&Visibility>,
     directional_lights: &Query<&DirectionalLight>,
     point_lights: &Query<&PointLight>,
@@ -238,6 +239,14 @@ pub fn handle_save_world(
         // Shape (from ParametricShape component — preserves dimensions!)
         if let Ok(param) = parametric_shapes.get(bevy_entity) {
             we.shape = Some(param.shape.clone());
+        }
+
+        // Mesh asset (imported glTF source path)
+        if let Ok(gltf_src) = gltf_sources.get(bevy_entity) {
+            we.mesh_asset = Some(wt::MeshAssetRef {
+                path: gltf_src.path.clone(),
+                node: None,
+            });
         }
 
         // Material
@@ -407,7 +416,8 @@ pub fn handle_save_world(
     };
 
     // Validate before saving
-    let validation_issues = wt::validation::validate_entities(&manifest.entities, &wt::WorldLimits::default());
+    let validation_issues =
+        wt::validation::validate_entities(&manifest.entities, &wt::WorldLimits::default());
     let warnings: Vec<String> = validation_issues
         .iter()
         .map(|i| i.message.clone())
@@ -749,11 +759,11 @@ fn load_edit_history(path: &std::path::Path) -> Option<wt::EditHistory> {
             continue;
         }
         // Check for cursor metadata line
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            if let Some(c) = val.get("_cursor").and_then(|v| v.as_u64()) {
-                cursor = c as usize;
-                continue;
-            }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line)
+            && let Some(c) = val.get("_cursor").and_then(|v| v.as_u64())
+        {
+            cursor = c as usize;
+            continue;
         }
         // Parse as WorldEdit
         match serde_json::from_str::<wt::WorldEdit>(line) {

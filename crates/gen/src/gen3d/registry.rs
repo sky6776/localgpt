@@ -28,6 +28,16 @@ pub struct ParametricShape {
     pub shape: wt::Shape,
 }
 
+/// Bevy component tracking the source file of an imported glTF/GLB.
+///
+/// Attached to the root entity spawned by `LoadGltf` so that
+/// `snapshot_entity` / save can record the path in `WorldEntity.mesh_asset`.
+#[derive(Component, Clone, Debug)]
+pub struct GltfSource {
+    /// Absolute or workspace-relative path to the original .glb/.gltf file.
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum GenEntityType {

@@ -313,6 +313,7 @@ struct GenCommandParams<'w, 's> {
     point_lights: Query<'w, 's, &'static PointLight>,
     spot_lights: Query<'w, 's, &'static SpotLight>,
     audio_emitters: Query<'w, 's, &'static audio::AudioEmitter>,
+    gltf_sources: Query<'w, 's, &'static GltfSource>,
     projections: Query<'w, 's, &'static Projection>,
     clear_color: Option<Res<'w, ClearColor>>,
     ambient_light: Option<Res<'w, GlobalAmbientLight>>,
@@ -336,6 +337,7 @@ macro_rules! snap_queries {
             behaviors_query: &$params.behaviors_query,
             audio_emitters: &$params.audio_emitters,
             parent_query: &$params.parent_query,
+            gltf_sources: &$params.gltf_sources,
             registry: &$params.registry,
         }
     };
@@ -492,14 +494,14 @@ fn process_gen_commands(
                     fov_degrees: cmd.fov_degrees,
                 };
                 let resp = handle_set_camera(cmd, &mut commands, &params.registry);
-                if let GenResponse::CameraSet = &resp {
-                    if let Some(old_cam) = old_camera {
-                        params.undo_stack.history.push(
-                            wt::EditOp::SetCamera { camera: new_camera },
-                            wt::EditOp::SetCamera { camera: old_cam },
-                            None,
-                        );
-                    }
+                if let GenResponse::CameraSet = &resp
+                    && let Some(old_cam) = old_camera
+                {
+                    params.undo_stack.history.push(
+                        wt::EditOp::SetCamera { camera: new_camera },
+                        wt::EditOp::SetCamera { camera: old_cam },
+                        None,
+                    );
                 }
                 resp
             }
@@ -780,6 +782,7 @@ fn process_gen_commands(
                     &params.audio_engine,
                     &params.behaviors_query,
                     &params.parametric_shapes,
+                    &params.gltf_sources,
                     &params.visibility_query,
                     &params.directional_lights,
                     &params.point_lights,
@@ -823,6 +826,8 @@ fn process_gen_commands(
                                 &mut params.registry,
                                 &mut params.next_entity_id,
                                 &mut params.behavior_state,
+                                &params.asset_server,
+                                &mut params.pending_gltf,
                             );
                         } else if let Some(scene_path) = world_load.scene_path
                             && let Some(resolved) =
@@ -969,6 +974,8 @@ fn process_gen_commands(
                 &mut params.registry,
                 &mut params.next_entity_id,
                 &mut params.behavior_state,
+                &params.asset_server,
+                &mut params.pending_gltf,
             ),
             GenCommand::Redo => handle_redo(
                 &mut params.undo_stack,
@@ -978,6 +985,8 @@ fn process_gen_commands(
                 &mut params.registry,
                 &mut params.next_entity_id,
                 &mut params.behavior_state,
+                &params.asset_server,
+                &mut params.pending_gltf,
             ),
             GenCommand::UndoInfo => GenResponse::UndoInfoResult {
                 undo_count: params.undo_stack.history.undo_count(),
@@ -1095,8 +1104,15 @@ fn process_pending_gltf_loads(
     for i in completed.into_iter().rev() {
         let load = pending.queue.remove(i);
 
-        // Spawn the scene
-        let entity = commands.spawn(SceneRoot(load.handle.clone())).id();
+        // Spawn the scene with source tracking
+        let entity = commands
+            .spawn((
+                SceneRoot(load.handle.clone()),
+                GltfSource {
+                    path: load.path.clone(),
+                },
+            ))
+            .id();
 
         // Register in the name registry
         registry.insert(load.name.clone(), entity);
@@ -1116,6 +1132,7 @@ fn process_pending_gltf_loads(
 /// entities with `Name` components (from glTF node names). This system
 /// scans for those named entities, registers them in `NameRegistry`, and
 /// applies the deferred behaviors and audio emitters.
+#[allow(clippy::too_many_arguments)]
 fn process_pending_world_setup(
     mut pending: ResMut<PendingWorldSetup>,
     mut registry: ResMut<NameRegistry>,
@@ -1398,7 +1415,7 @@ fn handle_entity_info(
         })
         .unwrap_or_default();
 
-    GenResponse::EntityInfo(EntityInfoData {
+    GenResponse::EntityInfo(Box::new(EntityInfoData {
         name: name.to_string(),
         entity_id: registry
             .get_id(entity)
@@ -1424,7 +1441,7 @@ fn handle_entity_info(
         children,
         parent,
         behaviors: behavior_summaries,
-    })
+    }))
 }
 
 fn handle_spawn_primitive(
@@ -1891,6 +1908,7 @@ fn handle_spawn_mesh(
 /// - Lights (directional / point / spot)
 /// - Behaviors (attached after spawn)
 /// - Parent-child relationships (resolved after all entities are spawned)
+#[allow(clippy::too_many_arguments)]
 fn spawn_world_entities(
     world_entities: &[wt::WorldEntity],
     commands: &mut Commands,
@@ -1899,6 +1917,8 @@ fn spawn_world_entities(
     registry: &mut ResMut<NameRegistry>,
     next_entity_id: &mut ResMut<NextEntityId>,
     behavior_state: &mut BehaviorState,
+    asset_server: &Res<AssetServer>,
+    pending_gltf: &mut ResMut<PendingGltfLoads>,
 ) {
     // First pass: collect world_id → entity name for parent resolution
     let id_to_name: std::collections::HashMap<u64, String> = world_entities
@@ -1968,6 +1988,39 @@ fn spawn_world_entities(
         } else if let Some(ref light) = we.light {
             // Light-only entity (no shape)
             spawn_light_entity(light, &name, transform, world_id, commands)
+        } else if let Some(ref mesh_ref) = we.mesh_asset {
+            // Imported glTF mesh — queue async load
+            let expanded = shellexpand::tilde(&mesh_ref.path).into_owned();
+            let p = std::path::Path::new(&expanded);
+            if p.exists() {
+                let asset_path = p.to_string_lossy().trim_start_matches('/').to_string();
+                let handle = asset_server.load::<Scene>(format!("{}#Scene0", asset_path));
+                pending_gltf.queue.push(PendingGltfLoad {
+                    handle,
+                    name: name.clone(),
+                    path: mesh_ref.path.clone(),
+                    send_response: false,
+                });
+            } else {
+                tracing::warn!(
+                    "Mesh asset '{}' for entity '{}' not found, spawning as group",
+                    mesh_ref.path,
+                    name
+                );
+            }
+            // Spawn a placeholder entity — process_pending_gltf_loads will
+            // replace it when the glTF finishes loading. For now register
+            // so behaviors and parent assignments can still resolve by name.
+            commands
+                .spawn((
+                    transform,
+                    Name::new(name.clone()),
+                    GenEntity {
+                        entity_type: GenEntityType::Mesh,
+                        world_id,
+                    },
+                ))
+                .id()
         } else {
             // Empty entity (group, audio-only, etc.)
             commands
@@ -2263,6 +2316,7 @@ struct SnapshotQueries<'a, 'w, 's> {
     behaviors_query: &'a Query<'w, 's, &'static mut EntityBehaviors>,
     audio_emitters: &'a Query<'w, 's, &'static audio::AudioEmitter>,
     parent_query: &'a Query<'w, 's, &'static ChildOf>,
+    gltf_sources: &'a Query<'w, 's, &'static GltfSource>,
     registry: &'a NameRegistry,
 }
 
@@ -2325,6 +2379,14 @@ fn snapshot_entity(
             } else {
                 None
             },
+        });
+    }
+
+    // Mesh asset (imported glTF)
+    if let Ok(gltf_src) = sq.gltf_sources.get(entity) {
+        we.mesh_asset = Some(wt::MeshAssetRef {
+            path: gltf_src.path.clone(),
+            node: None,
         });
     }
 
@@ -2398,10 +2460,10 @@ fn snapshot_entity(
     }
 
     // Parent
-    if let Ok(child_of) = sq.parent_query.get(entity) {
-        if let Some(parent_id) = sq.registry.get_id(child_of.0) {
-            we.parent = Some(parent_id);
-        }
+    if let Ok(child_of) = sq.parent_query.get(entity)
+        && let Some(parent_id) = sq.registry.get_id(child_of.0)
+    {
+        we.parent = Some(parent_id);
     }
 
     we
@@ -2445,6 +2507,7 @@ fn apply_modify_to_snapshot(we: &mut wt::WorldEntity, cmd: &ModifyEntityCmd) {
 }
 
 /// Apply a single `EditOp` to the scene. Returns a human-readable description.
+#[allow(clippy::too_many_arguments)]
 fn apply_edit_op(
     op: &wt::EditOp,
     commands: &mut Commands,
@@ -2453,6 +2516,8 @@ fn apply_edit_op(
     registry: &mut ResMut<NameRegistry>,
     next_entity_id: &mut ResMut<NextEntityId>,
     behavior_state: &mut BehaviorState,
+    asset_server: &Res<AssetServer>,
+    pending_gltf: &mut ResMut<PendingGltfLoads>,
 ) -> String {
     match op {
         wt::EditOp::DeleteEntity { id } => {
@@ -2475,6 +2540,8 @@ fn apply_edit_op(
                 registry,
                 next_entity_id,
                 behavior_state,
+                asset_server,
+                pending_gltf,
             );
             format!("re-spawned '{}'", name)
         }
@@ -2497,6 +2564,8 @@ fn apply_edit_op(
                     registry,
                     next_entity_id,
                     behavior_state,
+                    asset_server,
+                    pending_gltf,
                 );
                 format!("modified '{}'", name)
             } else {
@@ -2550,6 +2619,8 @@ fn apply_edit_op(
                         registry,
                         next_entity_id,
                         behavior_state,
+                        asset_server,
+                        pending_gltf,
                     )
                 })
                 .collect();
@@ -2558,6 +2629,7 @@ fn apply_edit_op(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_undo(
     undo_stack: &mut ResMut<UndoStack>,
     commands: &mut Commands,
@@ -2566,6 +2638,8 @@ fn handle_undo(
     registry: &mut ResMut<NameRegistry>,
     next_entity_id: &mut ResMut<NextEntityId>,
     behavior_state: &mut BehaviorState,
+    asset_server: &Res<AssetServer>,
+    pending_gltf: &mut ResMut<PendingGltfLoads>,
 ) -> GenResponse {
     let op = match undo_stack.history.undo() {
         Some(op) => op.clone(),
@@ -2580,10 +2654,13 @@ fn handle_undo(
         registry,
         next_entity_id,
         behavior_state,
+        asset_server,
+        pending_gltf,
     );
     GenResponse::Undone { description }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_redo(
     undo_stack: &mut ResMut<UndoStack>,
     commands: &mut Commands,
@@ -2592,6 +2669,8 @@ fn handle_redo(
     registry: &mut ResMut<NameRegistry>,
     next_entity_id: &mut ResMut<NextEntityId>,
     behavior_state: &mut BehaviorState,
+    asset_server: &Res<AssetServer>,
+    pending_gltf: &mut ResMut<PendingGltfLoads>,
 ) -> GenResponse {
     let op = match undo_stack.history.redo() {
         Some(op) => op.clone(),
@@ -2606,6 +2685,8 @@ fn handle_redo(
         registry,
         next_entity_id,
         behavior_state,
+        asset_server,
+        pending_gltf,
     );
     GenResponse::Redone { description }
 }
