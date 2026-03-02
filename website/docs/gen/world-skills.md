@@ -13,10 +13,59 @@ A saved world consists of:
 ```
 ~/.localgpt/workspace/skills/my-world/
 ├── SKILL.md          # Skill description for LLM context
-├── world.toml        # World manifest (environment, camera)
+├── world.toml        # World manifest (environment, camera, avatar)
 ├── scene.glb         # glTF binary with all entities
 ├── behaviors.toml    # Behavior definitions
-└── audio.toml        # Audio emitter and ambience config
+├── audio.toml        # Audio emitter and ambience config
+└── tours.toml        # Guided tour definitions
+```
+
+### world.toml
+
+The world manifest configures environment, camera, and avatar settings:
+
+```toml
+[environment]
+background_color = [0.1, 0.1, 0.2]
+ambient_light = [0.2, 0.2, 0.3]
+
+[camera]
+position = [0, 5, 10]
+look_at = [0, 0, 0]
+fov = 60
+
+[avatar]
+# User presence in the world
+spawn_position = [0, 1, 5]
+pov_mode = "first_person"  # or "third_person"
+movement_speed = 5.0
+height = 1.8
+# Optional: 3D model for third-person view
+# model = "avatar.glb"
+```
+
+### tours.toml
+
+Define guided tours with waypoints:
+
+```toml
+[[tour]]
+name = "overview"
+description = "A quick tour of the main areas"
+
+[[tour.waypoint]]
+position = [0, 3, 10]
+look_at = [0, 0, 0]
+description = "Welcome to the scene overview"
+pause_seconds = 3
+movement = "fly"  # "walk", "fly", or "teleport"
+
+[[tour.waypoint]]
+position = [10, 2, 0]
+look_at = [0, 1, 0]
+description = "Here's the main structure"
+pause_seconds = 5
+movement = "fly"
 ```
 
 ## Saving Worlds

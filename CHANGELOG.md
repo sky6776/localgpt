@@ -6,7 +6,38 @@ All notable changes to LocalGPT are documented in this file.
 
 ### Added
 
-- **Security hardening** — improved defenses for HTTP, WebSocket, and tool call attack surfaces.
+- **Gen undo/redo system** — full undo/redo support with stable entity IDs, LLM tools (`gen_undo`, `gen_redo`), and persistence via `history.jsonl`. Covers entities, lights, behaviors, camera, and environment.
+- **Gen behavior system** — declarative entity animations: `orbit`, `spin`, `bob`, `look_at`, `pulse`, `path_follow`, `bounce`. Behaviors stack and persist through save/load.
+- **Gen world save/load** — complete worlds serialized as skills (`SKILL.md` + `world.toml` + `scene.glb` + `behaviors.toml` + `audio.toml` + `tours.toml`). Includes `gen_save_world`, `gen_load_world`, and `gen_clear_scene` tools.
+- **Gen avatar and tours** — `[avatar]` section in `world.toml` for user presence; `tours.toml` for guided waypoint sequences with descriptions and movement modes.
+- **Gen parametric shapes** — unified world data model with `shape` field on entities. Supported: `box`, `sphere`, `cylinder`, `capsule`, `plane`, `torus`.
+- **Gen material properties** — full PBR material support: `alpha_mode`, `unlit`, `double_sided`, `reflectance`, `emissive`. Exposed in spawn and modify tools.
+- **Gen light properties** — `range`, `outer_angle`, `inner_angle` for spot lights; `direction` for directional/spot lights. All persisted and exposed in `entity_info`.
+- **Gen entity info enrichment** — `entity_info` now includes shape type, emissive, light data (direction, range, angles), audio emitter type, and behavior info.
+- **Gen glTF tracking** — source path tracked through save/load cycle for asset provenance.
+- **Document loaders** — new module for loading documents (PDF, DOCX, etc.) for RAG workflows.
+- **Audio transcription** — new module for transcribing audio files via Whisper-compatible APIs.
+- **TTS module** — text-to-speech integration for voice output.
+- **MMR re-ranking** — Maximal Marginal Relevance re-ranking for diverse memory search results.
+- **CLI completion** — shell completion generation for bash, zsh, fish via `localgpt completion`.
+- **CLI cron command** — manage cron jobs from CLI (`localgpt cron list/add/remove`).
+- **CLI hooks command** — manage lifecycle hooks from CLI.
+- **SpacetimeDB multiplayer** — web app for multiplayer 3D world collaboration.
+- **Mobile workspace editor** — iOS/Android UI for editing workspace files with security hardening.
+
+### Changed
+
+- **Mobile apps restructured** — `apps/ios` renamed to `apps/apple` for multi-platform support (iOS + macOS).
+- **OAuth providers removed** — all OAuth provider implementations removed for simplified authentication.
+
+### Fixed
+
+- **Gen visibility persistence** — visibility state now persists correctly through save/load and undo snapshots.
+- **Gen camera FOV** — saves actual camera FOV instead of hardcoded 45 degrees.
+- **Gen light saving** — light components save on any entity type, not just `GenEntityType::Light`.
+- **Gen loop detection** — raised threshold and fixed command channel race condition.
+- **Gen world load** — undo stack cleared when loading world without saved history.
+- **Codex CLI provider** — updated for new CLI interface.
 
 ## [0.3.0] - 2026-02-27
 

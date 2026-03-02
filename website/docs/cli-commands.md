@@ -12,19 +12,22 @@ LocalGPT provides a comprehensive command-line interface with several subcommand
 localgpt <COMMAND>
 
 Commands:
-  chat      Interactive multi-turn conversation
-  ask       Single question and response
-  gen       Launch world generation mode (Bevy renderer)
-  daemon    Manage the background daemon
-  memory    Memory management operations
-  search    Test web search provider
-  auth      Authenticate with providers
-  config    Configuration management
-  md        Manage LocalGPT.md standing instructions
-  sandbox   Shell sandbox diagnostics
-  paths     Show resolved directory paths
-  desktop   Launch desktop GUI
-  help      Print help information
+  chat        Interactive multi-turn conversation
+  ask         Single question and response
+  gen         Launch world generation mode (Bevy renderer)
+  daemon      Manage the background daemon
+  memory      Memory management operations
+  search      Test web search provider
+  auth        Authenticate with providers
+  config      Configuration management
+  md          Manage LocalGPT.md standing instructions
+  sandbox     Shell sandbox diagnostics
+  paths       Show resolved directory paths
+  desktop     Launch desktop GUI
+  completion  Generate shell completion scripts
+  cron        Manage cron jobs
+  hooks       Manage lifecycle hooks
+  help        Print help information
 ```
 
 ## Global Options
@@ -57,6 +60,9 @@ Options:
 | [`sandbox`](/docs/sandbox#cli-commands) | Inspect sandbox capabilities and run tests |
 | `paths` | Show resolved XDG directory paths |
 | `desktop` | Launch the native desktop GUI (egui) |
+| `completion` | Generate shell completion scripts (bash, zsh, fish) |
+| `cron` | Manage cron jobs (list, add, remove) |
+| `hooks` | Manage lifecycle hooks |
 
 ## Examples
 
@@ -105,6 +111,20 @@ localgpt auth gemini
 
 # Show resolved directory paths
 localgpt paths
+
+# Generate shell completion
+localgpt completion bash > /etc/bash_completion.d/localgpt
+localgpt completion zsh > "${fpath[1]}/_localgpt"
+localgpt completion fish > ~/.config/fish/completions/localgpt.fish
+
+# Manage cron jobs
+localgpt cron list
+localgpt cron add "0 */6 * * *" "Summarize recent memory and update MEMORY.md"
+localgpt cron remove <job-id>
+
+# Manage lifecycle hooks
+localgpt hooks list
+localgpt hooks set beforeToolCall "/path/to/hook.sh"
 ```
 
 ## Built-in Chat Commands

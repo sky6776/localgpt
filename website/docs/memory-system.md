@@ -14,7 +14,8 @@ The memory system consists of:
 2. **SQLite FTS5 Index** - Fast full-text keyword search using BM25 scoring
 3. **Vector Embeddings** - Local semantic search via fastembed (or OpenAI/GGUF embeddings) using sqlite-vec
 4. **Hybrid Search** - Combines FTS5 and vector search results (30% keyword, 70% semantic) for best recall
-5. **File Watcher** - Automatic reindexing when files change
+5. **MMR Re-ranking** - Maximal Marginal Relevance for diverse search results (optional)
+6. **File Watcher** - Automatic reindexing when files change
 
 ## File Structure
 
@@ -95,7 +96,8 @@ Designed REST endpoints for the chat API:
 2. **FTS5 Indexing** - Chunks are stored in SQLite FTS5 for fast keyword search, scored by BM25
 3. **Embedding Generation** - Chunks are embedded using a local model (fastembed by default — no API key needed) and stored in sqlite-vec for vector similarity search
 4. **Hybrid Scoring** - Search results combine FTS5 (30% weight) and vector similarity (70% weight) for best results
-5. **Temporal Decay** (optional) - Older memories can be penalized to prioritize recent information
+5. **MMR Re-ranking** (optional) - Results are re-ranked for diversity, reducing redundancy
+6. **Temporal Decay** (optional) - Older memories can be penalized to prioritize recent information
 
 ### Automatic Indexing
 
@@ -155,6 +157,10 @@ embedding_cache_dir = "~/.cache/localgpt/embeddings"
 # Penalizes older memories in search results
 # Recommended: 0.1 gives ~50% score penalty to 7-day old memories
 # temporal_decay_lambda = 0.0
+
+# MMR re-ranking for diverse results (default: false)
+# When enabled, re-ranks results to reduce redundancy
+# use_mmr = false
 ```
 
 ### Temporal Decay
