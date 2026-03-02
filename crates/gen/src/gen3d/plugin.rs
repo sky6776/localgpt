@@ -893,9 +893,12 @@ fn process_gen_commands(
                         params.avatar_config.active = world_load.avatar;
                         params.world_tours.tours = world_load.tours;
 
-                        // Restore edit history from saved world
+                        // Restore edit history from saved world, or clear if not saved
                         if let Some(history) = world_load.edit_history {
                             params.undo_stack.history = history;
+                        } else {
+                            // No saved history — start fresh
+                            params.undo_stack.history = wt::EditHistory::default();
                         }
 
                         GenResponse::WorldLoaded {
