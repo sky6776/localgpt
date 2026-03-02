@@ -986,6 +986,7 @@ fn process_gen_commands(
                 &mut params.behavior_state,
                 &params.asset_server,
                 &mut params.pending_gltf,
+                &mut params.audio_engine,
             ),
             GenCommand::Redo => handle_redo(
                 &mut params.undo_stack,
@@ -997,6 +998,7 @@ fn process_gen_commands(
                 &mut params.behavior_state,
                 &params.asset_server,
                 &mut params.pending_gltf,
+                &mut params.audio_engine,
             ),
             GenCommand::UndoInfo => GenResponse::UndoInfoResult {
                 undo_count: params.undo_stack.history.undo_count(),
@@ -2658,6 +2660,108 @@ fn apply_modify_to_snapshot(we: &mut wt::WorldEntity, cmd: &ModifyEntityCmd) {
     }
 }
 
+/// Convert `world_types::AudioSource` to gen's `AmbientSound`.
+fn convert_audio_source_to_ambient_sound(
+    source: &wt::AudioSource,
+) -> super::commands::AmbientSound {
+    use super::commands::AmbientSound;
+    match source {
+        wt::AudioSource::Wind { speed, gustiness } => AmbientSound::Wind {
+            speed: *speed,
+            gustiness: *gustiness,
+        },
+        wt::AudioSource::Rain { intensity } => AmbientSound::Rain {
+            intensity: *intensity,
+        },
+        wt::AudioSource::Forest { bird_density, wind } => AmbientSound::Forest {
+            bird_density: *bird_density,
+            wind: *wind,
+        },
+        wt::AudioSource::Ocean { wave_size } => AmbientSound::Ocean {
+            wave_size: *wave_size,
+        },
+        wt::AudioSource::Cave {
+            drip_rate,
+            resonance,
+        } => AmbientSound::Cave {
+            drip_rate: *drip_rate,
+            resonance: *resonance,
+        },
+        wt::AudioSource::Stream { flow_rate } => AmbientSound::Stream {
+            flow_rate: *flow_rate,
+        },
+        wt::AudioSource::Silence => AmbientSound::Silence,
+        // For non-ambient sources, default to silence (they shouldn't appear in ambience)
+        wt::AudioSource::Water { .. }
+        | wt::AudioSource::Fire { .. }
+        | wt::AudioSource::Hum { .. }
+        | wt::AudioSource::WindEmitter { .. }
+        | wt::AudioSource::Custom { .. }
+        | wt::AudioSource::Abc { .. }
+        | wt::AudioSource::File { .. } => AmbientSound::Silence,
+    }
+}
+
+/// Convert `world_types::AudioDef` to gen's `EmitterSound`.
+fn convert_audio_def_to_emitter_sound(audio: &wt::AudioDef) -> super::commands::EmitterSound {
+    use super::commands::EmitterSound;
+    match &audio.source {
+        wt::AudioSource::Water { turbulence } => EmitterSound::Water {
+            turbulence: *turbulence,
+        },
+        wt::AudioSource::Fire { intensity, crackle } => EmitterSound::Fire {
+            intensity: *intensity,
+            crackle: *crackle,
+        },
+        wt::AudioSource::Hum { frequency, warmth } => EmitterSound::Hum {
+            frequency: *frequency,
+            warmth: *warmth,
+        },
+        wt::AudioSource::WindEmitter { pitch } => EmitterSound::Wind { pitch: *pitch },
+        wt::AudioSource::Custom {
+            waveform,
+            filter_cutoff,
+            filter_type,
+        } => EmitterSound::Custom {
+            waveform: convert_waveform_type(*waveform),
+            filter_cutoff: *filter_cutoff,
+            filter_type: convert_filter_type(*filter_type),
+        },
+        // For non-emitter sources, default to a hum
+        wt::AudioSource::Wind { .. }
+        | wt::AudioSource::Rain { .. }
+        | wt::AudioSource::Forest { .. }
+        | wt::AudioSource::Ocean { .. }
+        | wt::AudioSource::Cave { .. }
+        | wt::AudioSource::Stream { .. }
+        | wt::AudioSource::Silence
+        | wt::AudioSource::Abc { .. }
+        | wt::AudioSource::File { .. } => EmitterSound::Hum {
+            frequency: 220.0,
+            warmth: 0.5,
+        },
+    }
+}
+
+fn convert_waveform_type(wt: wt::WaveformType) -> super::commands::WaveformType {
+    match wt {
+        wt::WaveformType::Sine => super::commands::WaveformType::Sine,
+        wt::WaveformType::Saw => super::commands::WaveformType::Saw,
+        wt::WaveformType::Square => super::commands::WaveformType::Square,
+        wt::WaveformType::WhiteNoise => super::commands::WaveformType::WhiteNoise,
+        wt::WaveformType::PinkNoise => super::commands::WaveformType::PinkNoise,
+        wt::WaveformType::BrownNoise => super::commands::WaveformType::BrownNoise,
+    }
+}
+
+fn convert_filter_type(ft: wt::FilterType) -> super::commands::FilterType {
+    match ft {
+        wt::FilterType::Lowpass => super::commands::FilterType::Lowpass,
+        wt::FilterType::Highpass => super::commands::FilterType::Highpass,
+        wt::FilterType::Bandpass => super::commands::FilterType::Bandpass,
+    }
+}
+
 /// Apply a single `EditOp` to the scene. Returns a human-readable description.
 #[allow(clippy::too_many_arguments)]
 fn apply_edit_op(
@@ -2670,6 +2774,7 @@ fn apply_edit_op(
     behavior_state: &mut BehaviorState,
     asset_server: &Res<AssetServer>,
     pending_gltf: &mut ResMut<PendingGltfLoads>,
+    audio_engine: &mut audio::AudioEngine,
 ) -> String {
     match op {
         wt::EditOp::DeleteEntity { id } => {
@@ -2773,10 +2878,54 @@ fn apply_edit_op(
                         behavior_state,
                         asset_server,
                         pending_gltf,
+                        audio_engine,
                     )
                 })
                 .collect();
             descriptions.join("; ")
+        }
+        wt::EditOp::SetAmbience { ambience } => {
+            // Convert from world-types AmbienceLayerDef to gen AmbienceLayerDef
+            let layers: Vec<super::commands::AmbienceLayerDef> = ambience
+                .iter()
+                .map(|layer| super::commands::AmbienceLayerDef {
+                    name: layer.name.clone(),
+                    sound: convert_audio_source_to_ambient_sound(&layer.source),
+                    volume: layer.volume,
+                })
+                .collect();
+
+            let cmd = super::commands::AmbienceCmd {
+                layers,
+                master_volume: None,
+                reverb: None,
+            };
+
+            audio::handle_set_ambience(cmd, audio_engine);
+            "restored ambience".to_string()
+        }
+        wt::EditOp::SpawnAudioEmitter { name, audio } => {
+            let cmd = super::commands::AudioEmitterCmd {
+                name: name.clone(),
+                sound: convert_audio_def_to_emitter_sound(audio),
+                volume: audio.volume,
+                radius: audio.radius.unwrap_or(10.0),
+                entity: None,   // Entity attachment not preserved in AudioDef
+                position: None, // Position not preserved in AudioDef
+            };
+
+            audio::handle_spawn_audio_emitter(
+                cmd,
+                audio_engine,
+                commands,
+                registry,
+                next_entity_id,
+            );
+            format!("re-spawned audio emitter '{}'", name)
+        }
+        wt::EditOp::RemoveAudioEmitter { name, audio: _ } => {
+            audio::handle_remove_audio_emitter(name, audio_engine);
+            format!("removed audio emitter '{}'", name)
         }
     }
 }
@@ -2792,6 +2941,7 @@ fn handle_undo(
     behavior_state: &mut BehaviorState,
     asset_server: &Res<AssetServer>,
     pending_gltf: &mut ResMut<PendingGltfLoads>,
+    audio_engine: &mut audio::AudioEngine,
 ) -> GenResponse {
     let op = match undo_stack.history.undo() {
         Some(op) => op.clone(),
@@ -2808,6 +2958,7 @@ fn handle_undo(
         behavior_state,
         asset_server,
         pending_gltf,
+        audio_engine,
     );
     GenResponse::Undone { description }
 }
@@ -2823,6 +2974,7 @@ fn handle_redo(
     behavior_state: &mut BehaviorState,
     asset_server: &Res<AssetServer>,
     pending_gltf: &mut ResMut<PendingGltfLoads>,
+    audio_engine: &mut audio::AudioEngine,
 ) -> GenResponse {
     let op = match undo_stack.history.redo() {
         Some(op) => op.clone(),
@@ -2839,6 +2991,7 @@ fn handle_redo(
         behavior_state,
         asset_server,
         pending_gltf,
+        audio_engine,
     );
     GenResponse::Redone { description }
 }
