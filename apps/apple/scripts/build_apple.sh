@@ -3,7 +3,7 @@ set -e
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# Root of the repo (one level deeper now: apps/ios/scripts -> apps/ios -> apps -> root)
+# Root of the repo (one level deeper now: apps/apple/scripts -> apps/apple -> apps -> root)
 ROOT_DIR="$SCRIPT_DIR/../../../"
 
 # Configuration

@@ -1,11 +1,11 @@
-# LocalGPT iOS App
+# LocalGPT Apple App
 
-This directory contains the iOS integration for LocalGPT using Rust, UniFFI, and SwiftUI.
+This directory contains the Apple platforms integration (iOS, macOS) for LocalGPT using Rust, UniFFI, and SwiftUI.
 
 ## Project Structure
 
 ```
-apps/ios/
+apps/apple/
 ├── LocalGPT.xcodeproj/      # Xcode project
 ├── LocalGPT/                # Main app target
 │   ├── LocalGPTApp.swift    # App entry point
@@ -23,7 +23,7 @@ apps/ios/
 ├── LocalGPTUITests/         # UI tests
 ├── LocalGPTWrapper/         # Swift Package (Rust XCFramework + bindings)
 └── scripts/
-    └── build_ios.sh         # Build script for Rust core
+    └── build_apple.sh       # Build script for Rust core
 ```
 
 ## Getting Started
@@ -37,7 +37,7 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
 Run the build script from the repository root:
 ```bash
-bash apps/ios/scripts/build_ios.sh
+bash apps/apple/scripts/build_apple.sh
 ```
 
 This will create `LocalGPTWrapper/LocalGPTCore.xcframework`.

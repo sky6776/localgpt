@@ -149,7 +149,7 @@ localgpt-mobile-ffi
     ├── uniffi-bindgen.rs  # Binary for generating bindings
     │
     └── Generated/
-        ├── Swift (iOS)    # apps/ios/Generated/
+        ├── Swift (iOS/macOS) # apps/apple/Generated/
         └── Kotlin (Android) # apps/android/Generated/
 ```
 

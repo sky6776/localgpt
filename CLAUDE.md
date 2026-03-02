@@ -41,7 +41,7 @@ cargo build -p localgpt --no-default-features
 cargo build -p localgpt-mobile-ffi
 target/debug/uniffi-bindgen generate \
   --library target/debug/liblocalgpt_mobile.dylib \
-  --language swift --out-dir apps/ios/Generated
+  --language swift --out-dir apps/apple/Generated
 target/debug/uniffi-bindgen generate \
   --library target/debug/liblocalgpt_mobile.dylib \
   --language kotlin --out-dir apps/android/Generated
@@ -203,7 +203,7 @@ See `docs/gen-audio.md` for detailed architecture and usage examples.
 
 UniFFI proc-macro bindings (`crates/mobile-ffi/`). `LocalGPTClient` owns its own tokio runtime and wraps `AgentHandle`. Error type: `MobileError` enum (Init, Chat, Memory, Config).
 
-iOS: `apps/ios/scripts/build_ios.sh` → XCFramework + Swift bindings
+Apple: `apps/apple/scripts/build_apple.sh` → XCFramework + Swift bindings (iOS/macOS)
 Android: `apps/android/scripts/build_android.sh` → cargo-ndk + Kotlin bindings
 
 ## Configuration
