@@ -132,7 +132,7 @@ pub async fn run(args: ChatArgs, agent_id: &str) -> Result<()> {
     };
 
     let mut agent = Agent::new(agent_config, &config, Arc::clone(&memory)).await?;
-    agent.extend_tools(crate::tools::create_cli_tools(&config)?);
+    agent.extend_tools(localgpt_cli_tools::create_cli_tools(&config)?);
     // Add spawn_agent tool for hierarchical delegation
     agent.extend_tools(vec![create_spawn_agent_tool(config.clone(), memory)]);
     debug!("New agent with tools: {:?}", agent.tool_names());

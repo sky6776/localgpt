@@ -1,0 +1,19 @@
+[package]
+name = "localgpt-cli-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LocalGPT CLI tools — bash, read_file, write_file, edit_file"
+
+[dependencies]
+localgpt-core = { workspace = true }
+localgpt-sandbox = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+shellexpand = { workspace = true }

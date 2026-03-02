@@ -250,7 +250,7 @@ async fn run_daemon_services(
             // Create tool factory that provides CLI tools to heartbeat
             let tool_factory: localgpt_core::heartbeat::ToolFactory =
                 Box::new(|config: &localgpt_core::config::Config| {
-                    crate::tools::create_cli_tools(config)
+                    localgpt_cli_tools::create_cli_tools(config)
                 });
 
             let runner = match HeartbeatRunner::new_with_gate_and_tools(
@@ -283,7 +283,7 @@ async fn run_daemon_services(
             // Create tool factory that provides CLI tools to Telegram
             let tool_factory: localgpt_server::telegram::ToolFactory =
                 Box::new(|config: &localgpt_core::config::Config| {
-                    crate::tools::create_cli_tools(config)
+                    localgpt_cli_tools::create_cli_tools(config)
                 });
 
             let bot = localgpt_server::telegram::run_telegram_bot(
@@ -310,7 +310,7 @@ async fn run_daemon_services(
             // Create tool factory that provides CLI tools to cron jobs
             let tool_factory: localgpt_core::cron::ToolFactory =
                 Box::new(|config: &localgpt_core::config::Config| {
-                    crate::tools::create_cli_tools(config).unwrap_or_default()
+                    localgpt_cli_tools::create_cli_tools(config).unwrap_or_default()
                 });
 
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
@@ -633,7 +633,9 @@ async fn run_heartbeat_once(agent_id: &str) -> Result<()> {
 
     // Create tool factory to provide CLI tools
     let tool_factory: localgpt_core::heartbeat::ToolFactory =
-        Box::new(|config: &localgpt_core::config::Config| crate::tools::create_cli_tools(config));
+        Box::new(|config: &localgpt_core::config::Config| {
+            localgpt_cli_tools::create_cli_tools(config)
+        });
 
     let runner =
         HeartbeatRunner::new_with_gate_and_tools(&config, agent_id, None, Some(tool_factory))?;

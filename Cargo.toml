@@ -2,6 +2,7 @@
 members = [
     "crates/core",
     "crates/cli",
+    "crates/cli-tools",
     "crates/server",
     "crates/sandbox",
     "crates/mobile-ffi",
@@ -66,6 +67,7 @@ localgpt-server = { version = "0.3.1-alpha.1", path = "crates/server" }
 localgpt-sandbox = { version = "0.3.1-alpha.1", path = "crates/sandbox" }
 localgpt-bridge = { version = "0.3.1-alpha.1", path = "crates/bridge" }
 localgpt-world-types = { version = "0.3.1-alpha.1", path = "crates/world-types" }
+localgpt-cli-tools = { version = "0.3.1-alpha.1", path = "crates/cli-tools" }
 
 [profile.release]
 lto = true

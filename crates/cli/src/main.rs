@@ -4,7 +4,6 @@ use clap::Parser;
 mod cli;
 #[cfg(feature = "desktop")]
 mod desktop;
-mod tools;
 
 use cli::{Cli, Commands};
 

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::audio::AudioDef;
 use crate::entity::{EntityPatch, WorldEntity};
 use crate::identity::EntityId;
 use crate::world::{CameraDef, EnvironmentDef};
@@ -35,8 +36,25 @@ pub enum EditOp {
     SetEnvironment { env: EnvironmentDef },
     /// Set camera position, look-at target, and FOV.
     SetCamera { camera: CameraDef },
+    /// Set ambient soundscape (replaces all layers).
+    SetAmbience { ambience: Vec<AmbienceLayerDef> },
+    /// Spawn an audio emitter attached to an entity or position.
+    SpawnAudioEmitter { name: String, audio: AudioDef },
+    /// Remove an audio emitter by name.
+    RemoveAudioEmitter { name: String, audio: AudioDef },
     /// A batch of atomic operations (all-or-nothing).
     Batch { ops: Vec<EditOp> },
+}
+
+/// A single ambient audio layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmbienceLayerDef {
+    /// Layer name (e.g., "wind", "rain").
+    pub name: String,
+    /// The sound source.
+    pub source: crate::audio::AudioSource,
+    /// Volume (0.0–1.0).
+    pub volume: f32,
 }
 
 impl EditOp {

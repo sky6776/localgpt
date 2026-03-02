@@ -24,6 +24,7 @@ gen = []
 localgpt-core = { workspace = true }
 localgpt-server = { workspace = true }
 localgpt-sandbox = { workspace = true }
+localgpt-cli-tools = { workspace = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -52,7 +52,7 @@ pub use avatar::{AvatarDef, PointOfView};
 pub use behavior::{BehaviorDef, PathMode};
 pub use creation::{CreationDef, SemanticCategory};
 pub use entity::{EntityPatch, WorldEntity, WorldTransform};
-pub use history::{EditHistory, EditOp, WorldEdit};
+pub use history::{AmbienceLayerDef, EditHistory, EditOp, WorldEdit};
 pub use identity::{CreationId, EntityId, EntityName, EntityRef};
 pub use light::{LightDef, LightType};
 pub use material::{AlphaModeDef, MaterialDef};
