@@ -767,6 +767,8 @@ pub struct EntityInfoData {
     pub parent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh_asset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviors: Vec<BehaviorSummary>,
 }

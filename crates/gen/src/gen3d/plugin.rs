@@ -375,6 +375,7 @@ fn process_gen_commands(
                 &params.point_lights,
                 &params.spot_lights,
                 &params.gltf_sources,
+                &params.audio_engine,
             ),
             GenCommand::Screenshot {
                 width,
@@ -1293,6 +1294,7 @@ fn handle_entity_info(
     point_lights: &Query<&PointLight>,
     spot_lights: &Query<&SpotLight>,
     gltf_sources: &Query<&GltfSource>,
+    audio_engine: &audio::AudioEngine,
 ) -> GenResponse {
     let Some(entity) = registry.get_entity(name) else {
         return GenResponse::Error {
@@ -1454,6 +1456,10 @@ fn handle_entity_info(
             .get(entity)
             .ok()
             .map(|s| s.path.clone()),
+        audio: audio_engine
+            .emitter_meta
+            .get(name)
+            .map(|m| m.sound_type.clone()),
         behaviors: behavior_summaries,
     }))
 }
