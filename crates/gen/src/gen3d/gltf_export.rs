@@ -6,11 +6,10 @@ use std::path::Path;
 
 use super::registry::*;
 
-/// Export all mesh entities from the scene to a GLB file at the given path.
-/// Returns Ok(()) on success, Err(message) on failure.
+/// Build glTF JSON root and binary buffer data from scene entities.
+/// Returns (root, bin_data, entity_to_node map).
 #[allow(clippy::too_many_arguments)]
-pub fn export_glb(
-    output_path: &Path,
+fn build_gltf_data(
     registry: &NameRegistry,
     transforms: &Query<&Transform>,
     gen_entities: &Query<&GenEntity>,
@@ -19,7 +18,11 @@ pub fn export_glb(
     material_assets: &Assets<StandardMaterial>,
     mesh_handles: &Query<&Mesh3d>,
     mesh_assets: &Assets<Mesh>,
-) -> Result<(), String> {
+) -> (
+    gltf_json::Root,
+    Vec<u8>,
+    std::collections::HashMap<Entity, u32>,
+) {
     use gltf_json::validation::Checked::Valid;
     use gltf_json::validation::USize64;
 
@@ -401,9 +404,39 @@ pub fn export_glb(
     });
     root.scene = Some(gltf_json::Index::new(0));
 
+    (root, bin_data, entity_to_node)
+}
+
+/// Export all mesh entities from the scene to a GLB file at the given path.
+/// Returns Ok(()) on success, Err(message) on failure.
+#[allow(clippy::too_many_arguments)]
+pub fn export_glb(
+    output_path: &Path,
+    registry: &NameRegistry,
+    transforms: &Query<&Transform>,
+    gen_entities: &Query<&GenEntity>,
+    parent_query: &Query<&ChildOf>,
+    material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
+    material_assets: &Assets<StandardMaterial>,
+    mesh_handles: &Query<&Mesh3d>,
+    mesh_assets: &Assets<Mesh>,
+) -> Result<(), String> {
+    use gltf_json::validation::USize64;
+
+    let (mut root, mut bin_data, _) = build_gltf_data(
+        registry,
+        transforms,
+        gen_entities,
+        parent_query,
+        material_handles,
+        material_assets,
+        mesh_handles,
+        mesh_assets,
+    );
+
     if !bin_data.is_empty() {
         root.buffers.push(gltf_json::Buffer {
-            byte_length: gltf_json::validation::USize64(bin_data.len() as u64),
+            byte_length: USize64(bin_data.len() as u64),
             uri: None,
             name: None,
             extensions: Default::default(),
@@ -448,4 +481,60 @@ pub fn export_glb(
     }
 
     std::fs::write(output_path, &glb).map_err(|e| format!("Failed to write GLB: {}", e))
+}
+
+/// Export to separate glTF JSON + BIN files for human readability.
+/// Creates `assets/geometry/scene.gltf` and `assets/geometry/scene.bin` under the output_dir.
+#[allow(clippy::too_many_arguments)]
+pub fn export_gltf(
+    output_dir: &Path,
+    registry: &NameRegistry,
+    transforms: &Query<&Transform>,
+    gen_entities: &Query<&GenEntity>,
+    parent_query: &Query<&ChildOf>,
+    material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
+    material_assets: &Assets<StandardMaterial>,
+    mesh_handles: &Query<&Mesh3d>,
+    mesh_assets: &Assets<Mesh>,
+) -> Result<(), String> {
+    use gltf_json::validation::USize64;
+
+    let (mut root, bin_data, _) = build_gltf_data(
+        registry,
+        transforms,
+        gen_entities,
+        parent_query,
+        material_handles,
+        material_assets,
+        mesh_handles,
+        mesh_assets,
+    );
+
+    // Set buffer URI to reference external .bin file
+    if !bin_data.is_empty() {
+        root.buffers.push(gltf_json::Buffer {
+            byte_length: USize64(bin_data.len() as u64),
+            uri: Some("scene.bin".to_string()),
+            name: None,
+            extensions: Default::default(),
+            extras: Default::default(),
+        });
+    }
+
+    // Create output directory
+    let geom_dir = output_dir.join("assets").join("geometry");
+    std::fs::create_dir_all(&geom_dir)
+        .map_err(|e| format!("Failed to create assets/geometry: {}", e))?;
+
+    // Write JSON (pretty-printed for readability)
+    let json = serde_json::to_string_pretty(&root)
+        .map_err(|e| format!("JSON serialization failed: {}", e))?;
+    std::fs::write(geom_dir.join("scene.gltf"), json)
+        .map_err(|e| format!("Failed to write scene.gltf: {}", e))?;
+
+    // Write binary buffer
+    std::fs::write(geom_dir.join("scene.bin"), bin_data)
+        .map_err(|e| format!("Failed to write scene.bin: {}", e))?;
+
+    Ok(())
 }

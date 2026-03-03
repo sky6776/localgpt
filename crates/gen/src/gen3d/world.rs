@@ -4,9 +4,13 @@
 //!
 //! ```text
 //! world-name/
-//!   SKILL.md       — Skill metadata + description
-//!   world.ron      — WorldManifest with inline entities (parametric shapes preserved)
-//!   scene.glb      — Optional glTF export (for external viewers)
+//!   SKILL.md           — Skill metadata + description
+//!   world.ron          — WorldManifest with inline entities (parametric shapes preserved)
+//!   history.jsonl      — Undo/redo history
+//!   assets/
+//!     geometry/
+//!       scene.gltf     — JSON glTF for external viewers (human-readable)
+//!       scene.bin      — Binary buffer (geometry data)
 //! ```
 //!
 //! ## Legacy format (v0 — TOML + glTF)
@@ -441,10 +445,9 @@ pub fn handle_save_world(
         };
     }
 
-    // Also export scene.glb as a backup / for external viewers
-    let scene_path = skill_dir.join("scene.glb");
-    if let Err(e) = export_scene_glb(
-        &scene_path,
+    // Export to glTF JSON + BIN for external viewers (human-readable)
+    if let Err(e) = super::gltf_export::export_gltf(
+        &skill_dir,
         registry,
         transforms,
         gen_entities,
@@ -559,6 +562,15 @@ fn load_ron_world(world_dir: &Path, ron_path: &Path) -> Result<WorldLoadResult, 
         .map_err(|e| format!("Failed to read world.ron: {}", e))?;
     let manifest: wt::WorldManifest =
         ron::from_str(&ron_str).map_err(|e| format!("Failed to parse world.ron: {}", e))?;
+
+    // Check version compatibility
+    if let Err(e) = manifest.check_version() {
+        return Err(format!(
+            "World '{}' is incompatible: {}. \
+             Try regenerating the world or using an older version of localgpt-gen.",
+            manifest.meta.name, e
+        ));
+    }
 
     // Extract ambient audio from entities (kind == Ambient, radius == None)
     let mut ambience_layers: Vec<AmbienceLayerDef> = Vec::new();
@@ -803,36 +815,6 @@ fn resolve_world_path(path: &str, workspace: &Path) -> Option<PathBuf> {
     }
 
     None
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Export scene geometry to GLB. Delegates to `gltf_export::export_glb`.
-#[allow(clippy::too_many_arguments)]
-fn export_scene_glb(
-    output_path: &Path,
-    registry: &NameRegistry,
-    transforms: &Query<&Transform>,
-    gen_entities: &Query<&GenEntity>,
-    parent_query: &Query<&ChildOf>,
-    material_handles: &Query<&MeshMaterial3d<StandardMaterial>>,
-    material_assets: &Assets<StandardMaterial>,
-    mesh_handles: &Query<&Mesh3d>,
-    mesh_assets: &Assets<Mesh>,
-) -> Result<(), String> {
-    super::gltf_export::export_glb(
-        output_path,
-        registry,
-        transforms,
-        gen_entities,
-        parent_query,
-        material_handles,
-        material_assets,
-        mesh_handles,
-        mesh_assets,
-    )
 }
 
 // ---------------------------------------------------------------------------

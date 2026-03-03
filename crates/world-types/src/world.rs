@@ -4,11 +4,48 @@
 //! store entities inline; large worlds split into per-chunk files.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::avatar::AvatarDef;
 use crate::creation::CreationDef;
 use crate::entity::WorldEntity;
 use crate::tour::TourDef;
+
+/// Current schema version. Increment when making breaking changes.
+pub const WORLD_SCHEMA_VERSION: u32 = 1;
+
+/// Minimum supported version for loading. Update when dropping old format support.
+pub const MIN_SUPPORTED_VERSION: u32 = 1;
+
+/// Version compatibility error.
+#[derive(Debug, Clone)]
+pub enum VersionError {
+    /// World file is too old to load.
+    TooOld { found: u32, min: u32 },
+    /// World file is from a newer version of the software.
+    TooNew { found: u32, current: u32 },
+}
+
+impl fmt::Display for VersionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VersionError::TooOld { found, min } => {
+                write!(
+                    f,
+                    "version {} is too old (minimum supported: {})",
+                    found, min
+                )
+            }
+            VersionError::TooNew { found, current } => {
+                write!(
+                    f,
+                    "version {} is from a newer localgpt-gen (current: {})",
+                    found, current
+                )
+            }
+        }
+    }
+}
 
 /// Top-level world manifest — everything needed to save/load a world.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,7 +139,7 @@ impl Default for CameraDef {
 }
 
 fn default_version() -> u32 {
-    1
+    WORLD_SCHEMA_VERSION
 }
 fn default_next_id() -> u64 {
     1
@@ -132,6 +169,23 @@ impl WorldManifest {
             entities: Vec::new(),
             creations: Vec::new(),
             next_entity_id: default_next_id(),
+        }
+    }
+
+    /// Check if this manifest's version is compatible with current code.
+    pub fn check_version(&self) -> Result<(), VersionError> {
+        if self.version < MIN_SUPPORTED_VERSION {
+            Err(VersionError::TooOld {
+                found: self.version,
+                min: MIN_SUPPORTED_VERSION,
+            })
+        } else if self.version > WORLD_SCHEMA_VERSION {
+            Err(VersionError::TooNew {
+                found: self.version,
+                current: WORLD_SCHEMA_VERSION,
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -220,5 +274,39 @@ mod tests {
         m.entities
             .push(WorldEntity::new(2, "sphere").with_shape(Shape::Sphere { radius: 1.0 }));
         assert!(m.estimate_triangles() > 0);
+    }
+
+    #[test]
+    fn version_check_current() {
+        let m = WorldManifest::new("test");
+        assert!(m.check_version().is_ok());
+    }
+
+    #[test]
+    fn version_check_too_old() {
+        let mut m = WorldManifest::new("test");
+        m.version = 0; // Below MIN_SUPPORTED_VERSION
+        let err = m.check_version().unwrap_err();
+        match err {
+            VersionError::TooOld { found, min } => {
+                assert_eq!(found, 0);
+                assert_eq!(min, MIN_SUPPORTED_VERSION);
+            }
+            _ => panic!("Expected TooOld error"),
+        }
+    }
+
+    #[test]
+    fn version_check_too_new() {
+        let mut m = WorldManifest::new("test");
+        m.version = 99; // Above WORLD_SCHEMA_VERSION
+        let err = m.check_version().unwrap_err();
+        match err {
+            VersionError::TooNew { found, current } => {
+                assert_eq!(found, 99);
+                assert_eq!(current, WORLD_SCHEMA_VERSION);
+            }
+            _ => panic!("Expected TooNew error"),
+        }
     }
 }
