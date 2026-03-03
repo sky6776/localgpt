@@ -6,6 +6,8 @@ All notable changes to LocalGPT are documented in this file.
 
 ### Added
 
+- **CLI TUI mode** — interactive terminal user interface with streaming responses and session management via `localgpt tui`.
+- **Gen audio undo/redo** — audio emitter commands now support full undo/redo with `gen_audio_emitter` and `gen_modify_audio` operations reversible.
 - **Gen undo/redo system** — full undo/redo support with stable entity IDs, LLM tools (`gen_undo`, `gen_redo`), and persistence via `history.jsonl`. Covers entities, lights, behaviors, camera, and environment.
 - **Gen behavior system** — declarative entity animations: `orbit`, `spin`, `bob`, `look_at`, `pulse`, `path_follow`, `bounce`. Behaviors stack and persist through save/load.
 - **Gen world save/load** — complete worlds serialized as skills (`SKILL.md` + `world.toml` + `scene.glb` + `behaviors.toml` + `audio.toml` + `tours.toml`). Includes `gen_save_world`, `gen_load_world`, and `gen_clear_scene` tools.

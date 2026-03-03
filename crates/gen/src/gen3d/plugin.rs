@@ -731,30 +731,33 @@ fn process_gen_commands(
             }
             GenCommand::ModifyAudioEmitter(cmd) => {
                 // Capture previous state for undo
-                let prev_audio = params
-                    .audio_engine
-                    .emitter_meta
-                    .get(&cmd.name)
-                    .map(|meta| wt::AudioDef {
-                        kind: wt::AudioKind::Sfx,
-                        source: compat::emitter_sound_to_source(&meta.sound),
-                        volume: meta.base_volume,
-                        radius: Some(meta.radius),
-                        rolloff: wt::Rolloff::default(),
-                    });
-                let resp = audio::handle_modify_audio_emitter(cmd.clone(), &mut params.audio_engine);
+                let prev_audio =
+                    params
+                        .audio_engine
+                        .emitter_meta
+                        .get(&cmd.name)
+                        .map(|meta| wt::AudioDef {
+                            kind: wt::AudioKind::Sfx,
+                            source: compat::emitter_sound_to_source(&meta.sound),
+                            volume: meta.base_volume,
+                            radius: Some(meta.radius),
+                            rolloff: wt::Rolloff::default(),
+                        });
+                let resp =
+                    audio::handle_modify_audio_emitter(cmd.clone(), &mut params.audio_engine);
                 // Get new state for redo
-                let new_audio = params
-                    .audio_engine
-                    .emitter_meta
-                    .get(&cmd.name)
-                    .map(|meta| wt::AudioDef {
-                        kind: wt::AudioKind::Sfx,
-                        source: compat::emitter_sound_to_source(&meta.sound),
-                        volume: meta.base_volume,
-                        radius: Some(meta.radius),
-                        rolloff: wt::Rolloff::default(),
-                    });
+                let new_audio =
+                    params
+                        .audio_engine
+                        .emitter_meta
+                        .get(&cmd.name)
+                        .map(|meta| wt::AudioDef {
+                            kind: wt::AudioKind::Sfx,
+                            source: compat::emitter_sound_to_source(&meta.sound),
+                            volume: meta.base_volume,
+                            radius: Some(meta.radius),
+                            rolloff: wt::Rolloff::default(),
+                        });
                 if let (Some(prev), Some(new)) = (prev_audio, new_audio) {
                     params.undo_stack.history.push(
                         wt::EditOp::SpawnAudioEmitter {
@@ -772,17 +775,18 @@ fn process_gen_commands(
             }
             GenCommand::RemoveAudioEmitter { name } => {
                 // Capture previous state for undo
-                let prev_audio = params
-                    .audio_engine
-                    .emitter_meta
-                    .get(&name)
-                    .map(|meta| wt::AudioDef {
-                        kind: wt::AudioKind::Sfx,
-                        source: compat::emitter_sound_to_source(&meta.sound),
-                        volume: meta.base_volume,
-                        radius: Some(meta.radius),
-                        rolloff: wt::Rolloff::default(),
-                    });
+                let prev_audio =
+                    params
+                        .audio_engine
+                        .emitter_meta
+                        .get(&name)
+                        .map(|meta| wt::AudioDef {
+                            kind: wt::AudioKind::Sfx,
+                            source: compat::emitter_sound_to_source(&meta.sound),
+                            volume: meta.base_volume,
+                            radius: Some(meta.radius),
+                            rolloff: wt::Rolloff::default(),
+                        });
                 let resp = audio::handle_remove_audio_emitter(&name, &mut params.audio_engine);
                 // Push undo: inverse re-spawns the emitter
                 if let Some(prev) = prev_audio {
@@ -791,10 +795,7 @@ fn process_gen_commands(
                             name: name.clone(),
                             audio: prev.clone(),
                         },
-                        wt::EditOp::SpawnAudioEmitter {
-                            name,
-                            audio: prev,
-                        },
+                        wt::EditOp::SpawnAudioEmitter { name, audio: prev },
                         None,
                     );
                 }
