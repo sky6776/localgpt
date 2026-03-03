@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -98,10 +98,8 @@ pub async fn run(args: TuiArgs, agent_id: &str) -> Result<()> {
 
     if let Err(e) = app_result {
         eprintln!("TUI Error: {:?}", e);
-    } else {
-        if let Err(e) = agent.auto_save_session() {
-            eprintln!("Warning: Failed to auto-save session: {}", e);
-        }
+    } else if let Err(e) = agent.auto_save_session() {
+        eprintln!("Warning: Failed to auto-save session: {}", e);
     }
 
     Ok(())
@@ -235,30 +233,26 @@ async fn run_app(
             ref mut output,
             ..
         } = app.messages[i]
+            && output.is_none()
         {
-            if output.is_none() {
-                // Find matching tool call in raw history to get ID
-                if let Some(msg) = raw_msgs.iter().find(|m| {
-                    m.message.tool_calls.as_ref().map_or(false, |calls| {
-                        calls
-                            .iter()
-                            .any(|c| &c.name == name && &c.arguments == arguments)
-                    })
+            // Find matching tool call in raw history to get ID
+            if let Some(msg) = raw_msgs.iter().find(|m| {
+                m.message.tool_calls.as_ref().is_some_and(|calls| {
+                    calls
+                        .iter()
+                        .any(|c| &c.name == name && &c.arguments == arguments)
+                })
+            }) && let Some(calls) = &msg.message.tool_calls
+                && let Some(call) = calls
+                    .iter()
+                    .find(|c| &c.name == name && &c.arguments == arguments)
+            {
+                // Find subsequent Role::Tool message with this ID
+                if let Some(tool_msg) = raw_msgs.iter().find(|m| {
+                    m.message.role == localgpt_core::agent::Role::Tool
+                        && m.message.tool_call_id.as_ref() == Some(&call.id)
                 }) {
-                    if let Some(calls) = &msg.message.tool_calls {
-                        if let Some(call) = calls
-                            .iter()
-                            .find(|c| &c.name == name && &c.arguments == arguments)
-                        {
-                            // Find subsequent Role::Tool message with this ID
-                            if let Some(tool_msg) = raw_msgs.iter().find(|m| {
-                                m.message.role == localgpt_core::agent::Role::Tool
-                                    && m.message.tool_call_id.as_ref() == Some(&call.id)
-                            }) {
-                                *output = Some(tool_msg.message.content.clone());
-                            }
-                        }
-                    }
+                    *output = Some(tool_msg.message.content.clone());
                 }
             }
         }
@@ -276,10 +270,10 @@ async fn run_app(
     let tick_rate = std::time::Duration::from_millis(50);
     let _input_task = tokio::spawn(async move {
         loop {
-            if crossterm::event::poll(tick_rate).unwrap_or(false) {
-                if let Ok(evt) = crossterm::event::read() {
-                    let _ = tx.send(AppEvent::Input(evt)).await;
-                }
+            if crossterm::event::poll(tick_rate).unwrap_or(false)
+                && let Ok(evt) = crossterm::event::read()
+            {
+                let _ = tx.send(AppEvent::Input(evt)).await;
             }
             let _ = tx.send(AppEvent::Tick).await;
         }
@@ -302,12 +296,11 @@ async fn run_app(
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('o')
                     {
-                        if let Some(idx) = app.selected_index {
-                            if let Some(AppMessage::ToolCall { is_expanded, .. }) =
+                        if let Some(idx) = app.selected_index
+                            && let Some(AppMessage::ToolCall { is_expanded, .. }) =
                                 app.messages.get_mut(idx)
-                            {
-                                *is_expanded = !*is_expanded;
-                            }
+                        {
+                            *is_expanded = !*is_expanded;
                         }
                         continue;
                     }
@@ -317,19 +310,19 @@ async fn run_app(
                             return Ok(());
                         }
                         KeyCode::Up => {
-                            if let Some(idx) = app.selected_index {
-                                if idx > 0 {
-                                    app.selected_index = Some(idx - 1);
-                                }
+                            if let Some(idx) = app.selected_index
+                                && idx > 0
+                            {
+                                app.selected_index = Some(idx - 1);
                             } else if !app.messages.is_empty() {
                                 app.selected_index = Some(app.messages.len() - 1);
                             }
                         }
                         KeyCode::Down => {
-                            if let Some(idx) = app.selected_index {
-                                if idx + 1 < app.messages.len() {
-                                    app.selected_index = Some(idx + 1);
-                                }
+                            if let Some(idx) = app.selected_index
+                                && idx + 1 < app.messages.len()
+                            {
+                                app.selected_index = Some(idx + 1);
                             }
                         }
                         KeyCode::Enter => {
@@ -464,7 +457,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                         first = false;
                     } else {
                         lines.push(Line::from(vec![
-                            Span::styled(if is_selected { "  " } else { "  " }, style),
+                            Span::styled("  ", style),
                             Span::raw(format!("  {}", line)),
                         ]));
                     }
@@ -516,11 +509,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let max_lines = chunks[0].height.saturating_sub(2) as usize;
     let total_lines = lines.len();
 
-    let skip_lines = if total_lines > max_lines {
-        total_lines - max_lines
-    } else {
-        0
-    };
+    let skip_lines = total_lines.saturating_sub(max_lines);
 
     let visible_lines = lines.into_iter().skip(skip_lines).collect::<Vec<_>>();
 

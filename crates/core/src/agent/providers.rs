@@ -3042,14 +3042,14 @@ impl LLMProvider for GeminiCliProvider {
                         }
                         "message" => {
                             let role = json.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                            if role == "assistant" {
-                                if let Some(content) = json.get("content").and_then(|v| v.as_str()) {
-                                    yield Ok(StreamChunk {
-                                        delta: content.to_string(),
-                                        done: false,
-                                        tool_calls: None,
-                                    });
-                                }
+                            if role == "assistant"
+                                && let Some(content) = json.get("content").and_then(|v| v.as_str())
+                            {
+                                yield Ok(StreamChunk {
+                                    delta: content.to_string(),
+                                    done: false,
+                                    tool_calls: None,
+                                });
                             }
                         }
                         "tool_use" => {
@@ -3537,14 +3537,15 @@ impl LLMProvider for CodexCliProvider {
                                     match detail_type {
                                         "AgentMessage" => {
                                             // Handle agent message as it comes
-                                            if event_type == "item.completed" {
-                                                 if let Some(text) = detail_content.and_then(|v| v.get("text")).and_then(|v| v.as_str()) {
-                                                     yield Ok(StreamChunk {
-                                                         delta: text.to_string(),
-                                                         done: false,
-                                                         tool_calls: None,
-                                                     });
-                                                 }
+                                            if event_type == "item.completed"
+                                                && let Some(text) =
+                                                    detail_content.and_then(|v| v.get("text")).and_then(|v| v.as_str())
+                                            {
+                                                yield Ok(StreamChunk {
+                                                    delta: text.to_string(),
+                                                    done: false,
+                                                    tool_calls: None,
+                                                });
                                             }
                                         }
                                         "CommandExecution" | "McpToolCall" | "CollabToolCall" | "WebSearch" | "FileChange" => {
