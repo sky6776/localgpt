@@ -5953,6 +5953,7 @@ dependencies = [
  "clap",
  "cpal 0.17.1",
  "fundsp",
+ "futures",
  "gltf-json",
  "image",
  "localgpt-cli-tools",

@@ -790,6 +790,100 @@ pub fn extract_tool_detail(tool_name: &str, arguments: &str) -> Option<String> {
             .get("query")
             .and_then(|v| v.as_str())
             .map(|s| format!("\"{}\"", s)),
+
+        // Gen tools - 3D scene manipulation
+        "gen_spawn_primitive" => {
+            let name = args.get("name").and_then(|v| v.as_str());
+            let shape = args.get("shape").and_then(|v| v.as_str()).unwrap_or("?");
+            name.map(|n| format!("{} ({})", n, shape))
+        }
+        "gen_spawn_mesh" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_modify_entity" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_delete_entity" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_entity_info" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_set_light" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_load_gltf" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_export_screenshot" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_export_gltf" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_save_world" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| format!("'{}'", s)),
+        "gen_load_world" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_export_world" => args
+            .get("format")
+            .and_then(|v| v.as_str())
+            .map(|f| format!("format: {}", f)),
+
+        // Gen tools - audio
+        "gen_audio_emitter" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_modify_audio" => args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+
+        // Gen tools - behaviors
+        "gen_add_behavior" => {
+            let entity = args.get("entity").and_then(|v| v.as_str());
+            let behavior_type = args
+                .get("behavior")
+                .and_then(|b| b.get("type"))
+                .and_then(|v| v.as_str());
+            match (entity, behavior_type) {
+                (Some(e), Some(t)) => Some(format!("{} [{}]", e, t)),
+                (Some(e), None) => Some(e.to_string()),
+                _ => None,
+            }
+        }
+        "gen_remove_behavior" => args
+            .get("entity")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "gen_list_behaviors" => args
+            .get("entity")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+
+        // Gen tools with no meaningful detail
+        "gen_scene_info"
+        | "gen_screenshot"
+        | "gen_set_camera"
+        | "gen_set_environment"
+        | "gen_set_ambience"
+        | "gen_audio_info"
+        | "gen_pause_behaviors"
+        | "gen_clear_scene" => None,
+
         _ => None,
     }
 }

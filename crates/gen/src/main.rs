@@ -5,8 +5,11 @@
 
 use anyhow::Result;
 use clap::Parser;
+use futures::StreamExt;
+use localgpt_core::agent::tools::extract_tool_detail;
 use localgpt_core::agent::{Agent, list_sessions_for_agent, search_sessions_for_agent};
 use localgpt_core::commands::Interface;
+use std::io::Write as _;
 use std::path::PathBuf;
 
 mod avatar_tools;
@@ -343,6 +346,90 @@ fn extract_snippet(content: &str, query: &str, max_len: usize) -> String {
     }
 }
 
+/// Run a streaming chat with tool call display.
+///
+/// This mirrors the CLI mode's streaming chat behavior:
+/// - Streams response chunks in real-time
+/// - Shows tool calls with detail extraction
+/// - Displays execution status for each tool
+async fn streaming_chat(agent: &mut Agent, input: &str) -> Result<()> {
+    print!("\nLocalGPT: ");
+    std::io::stdout().flush().ok();
+
+    match agent.chat_stream_with_images(input, vec![]).await {
+        Ok(mut stream) => {
+            let mut full_response = String::new();
+            let mut pending_tool_calls = None;
+
+            // Stream response chunks
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(chunk) => {
+                        print!("{}", chunk.delta);
+                        std::io::stdout().flush().ok();
+                        full_response.push_str(&chunk.delta);
+
+                        if chunk.done && chunk.tool_calls.is_some() {
+                            pending_tool_calls = chunk.tool_calls;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("\nStream error: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Handle tool calls with display
+            if let Some(tool_calls) = pending_tool_calls {
+                for tc in &tool_calls {
+                    let detail = extract_tool_detail(&tc.name, &tc.arguments);
+                    if let Some(ref d) = detail {
+                        println!("\n[{}: {}]", tc.name, d);
+                    } else {
+                        println!("\n[{}]", tc.name);
+                    }
+                }
+
+                // Execute with feedback
+                agent
+                    .execute_streaming_tool_calls(
+                        &full_response,
+                        tool_calls,
+                        |name, args| {
+                            let detail = extract_tool_detail(name, args);
+                            if let Some(ref d) = detail {
+                                print!("\n> Running: {} ({}) ... ", name, d);
+                            } else {
+                                print!("\n> Running: {} ... ", name);
+                            }
+                            std::io::stdout().flush().ok();
+                        },
+                        |_name, result| match result {
+                            Ok(()) => print!("Done."),
+                            Err(e) => print!("Failed: {}", e),
+                        },
+                    )
+                    .await?;
+
+                println!();
+            } else {
+                // No tool calls - finish the stream
+                agent.finish_chat_stream(&full_response);
+            }
+
+            if let Err(e) = agent.auto_save_session() {
+                eprintln!("Warning: Failed to auto-save session: {}", e);
+            }
+        }
+        Err(e) => {
+            eprintln!("\nError: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Parser)]
 #[command(name = "localgpt-gen")]
 #[command(about = "LocalGPT Gen — AI-driven 3D scene generation")]
@@ -517,8 +604,8 @@ Use `get_avatar_state` frequently to understand your position.
     // If initial prompt given, send it
     if let Some(prompt) = initial_prompt {
         println!("\n> {}", prompt);
-        let response = agent.chat(&prompt).await?;
-        println!("\nLocalGPT: {}\n", response);
+        streaming_chat(&mut agent, &prompt).await?;
+        println!();
     }
 
     // Interactive loop
@@ -552,8 +639,8 @@ Use `get_avatar_state` frequently to understand your position.
             break;
         }
 
-        let response = agent.chat(input).await?;
-        println!("\nLocalGPT: {}\n", response);
+        streaming_chat(&mut agent, input).await?;
+        println!();
     }
 
     Ok(())
@@ -616,8 +703,8 @@ async fn run_agent_loop(
     // If initial prompt given, send it
     if let Some(prompt) = initial_prompt {
         println!("\nYou: {}", prompt);
-        let response = agent.chat(&prompt).await?;
-        println!("\nLocalGPT: {}\n", response);
+        streaming_chat(&mut agent, &prompt).await?;
+        println!();
     }
 
     // Interactive loop
@@ -654,13 +741,13 @@ async fn run_agent_loop(
                 CommandResult::Continue => continue,
                 CommandResult::Quit => break,
                 CommandResult::SendMessage(msg) => {
-                    let response = agent.chat(&msg).await?;
-                    println!("\nLocalGPT: {}\n", response);
+                    streaming_chat(&mut agent, &msg).await?;
+                    println!();
                 }
             }
         } else {
-            let response = agent.chat(input).await?;
-            println!("\nLocalGPT: {}\n", response);
+            streaming_chat(&mut agent, input).await?;
+            println!();
         }
     }
 
