@@ -470,6 +470,174 @@ fn process_gen_commands(
                 }
                 resp
             }
+            GenCommand::SpawnBatch { entities } => {
+                let mut results = Vec::with_capacity(entities.len());
+                let mut spawned_entities = Vec::new();
+
+                for cmd in entities {
+                    // Snapshot before spawn for undo
+                    let resp = handle_spawn_primitive(
+                        cmd.clone(),
+                        &mut commands,
+                        &mut params.meshes,
+                        &mut params.materials,
+                        &mut params.registry,
+                        &mut params.next_entity_id,
+                    );
+
+                    match &resp {
+                        GenResponse::Spawned { name, entity_id } => {
+                            results.push(format!("Created: {} (id: {})", name, entity_id));
+                            if let Some(ent) = params.registry.get_entity(name)
+                                && let Some(id) = params.registry.get_id(ent)
+                            {
+                                params.dirty_tracker.mark_dirty(id);
+                                spawned_entities.push(snapshot_entity(
+                                    name,
+                                    ent,
+                                    id,
+                                    &snap_queries!(params),
+                                ));
+                            }
+                        }
+                        GenResponse::Error { message } => {
+                            results.push(format!("Failed: {} - {}", cmd.name, message));
+                        }
+                        _ => {
+                            results.push(format!("Failed: {} - unexpected response", cmd.name));
+                        }
+                    }
+                }
+
+                // Record undo for batch spawn (single batch delete)
+                if !spawned_entities.is_empty() {
+                    let ids: Vec<wt::EntityId> = spawned_entities.iter().map(|we| we.id).collect();
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch {
+                            ops: ids.into_iter().map(wt::EditOp::delete).collect(),
+                        },
+                        wt::EditOp::Batch {
+                            ops: spawned_entities
+                                .into_iter()
+                                .map(wt::EditOp::spawn)
+                                .collect(),
+                        },
+                        None,
+                    );
+                }
+
+                GenResponse::BatchResult { results }
+            }
+            GenCommand::ModifyBatch { entities } => {
+                let mut results = Vec::with_capacity(entities.len());
+                let mut undo_ops = Vec::new();
+                let mut redo_ops = Vec::new();
+
+                for cmd in entities {
+                    // Snapshot before modify
+                    let pre_snapshot = params.registry.get_entity(&cmd.name).and_then(|e| {
+                        params
+                            .registry
+                            .get_id(e)
+                            .map(|id| snapshot_entity(&cmd.name, e, id, &snap_queries!(params)))
+                    });
+
+                    let resp = handle_modify_entity(
+                        cmd.clone(),
+                        &mut commands,
+                        &params.registry,
+                        &mut params.materials,
+                        &params.material_handles,
+                        &params.transforms,
+                    );
+
+                    match &resp {
+                        GenResponse::Modified { name } => {
+                            results.push(format!("Modified: {}", name));
+                            if let Some(old_we) = pre_snapshot {
+                                let id = old_we.id;
+                                params.dirty_tracker.mark_dirty(id);
+                                if let Some(_new_ent) = params.registry.get_entity(name) {
+                                    let mut new_we = old_we.clone();
+                                    apply_modify_to_snapshot(&mut new_we, &cmd);
+                                    undo_ops.push(wt::EditOp::delete(id));
+                                    undo_ops.push(wt::EditOp::spawn(old_we));
+                                    redo_ops.push(wt::EditOp::delete(id));
+                                    redo_ops.push(wt::EditOp::spawn(new_we));
+                                }
+                            }
+                        }
+                        GenResponse::Error { message } => {
+                            results.push(format!("Failed: {} - {}", cmd.name, message));
+                        }
+                        _ => {
+                            results.push(format!("Failed: {} - unexpected response", cmd.name));
+                        }
+                    }
+                }
+
+                // Record undo for batch modify
+                if !undo_ops.is_empty() {
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch { ops: redo_ops },
+                        wt::EditOp::Batch { ops: undo_ops },
+                        None,
+                    );
+                }
+
+                GenResponse::BatchResult { results }
+            }
+            GenCommand::DeleteBatch { names } => {
+                let mut results = Vec::with_capacity(names.len());
+                let mut deleted_entities = Vec::new();
+
+                for name in names {
+                    // Snapshot before delete
+                    let pre_snapshot = params.registry.get_entity(&name).and_then(|e| {
+                        params
+                            .registry
+                            .get_id(e)
+                            .map(|id| snapshot_entity(&name, e, id, &snap_queries!(params)))
+                    });
+
+                    let resp = handle_delete_entity(&name, &mut commands, &mut params.registry);
+
+                    match &resp {
+                        GenResponse::Deleted { name } => {
+                            results.push(format!("Deleted: {}", name));
+                            if let Some(we) = pre_snapshot {
+                                params.dirty_tracker.mark_dirty(we.id);
+                                deleted_entities.push(we);
+                            }
+                        }
+                        GenResponse::Error { message } => {
+                            results.push(format!("Failed: {} - {}", name, message));
+                        }
+                        _ => {
+                            results.push(format!("Failed: {} - unexpected response", name));
+                        }
+                    }
+                }
+
+                // Record undo for batch delete (batch spawn to restore)
+                if !deleted_entities.is_empty() {
+                    let ids: Vec<wt::EntityId> = deleted_entities.iter().map(|we| we.id).collect();
+                    params.undo_stack.history.push(
+                        wt::EditOp::Batch {
+                            ops: deleted_entities
+                                .into_iter()
+                                .map(wt::EditOp::spawn)
+                                .collect(),
+                        },
+                        wt::EditOp::Batch {
+                            ops: ids.into_iter().map(wt::EditOp::delete).collect(),
+                        },
+                        None,
+                    );
+                }
+
+                GenResponse::BatchResult { results }
+            }
             GenCommand::SetCamera(cmd) => {
                 // Capture old camera state for undo
                 let old_camera = params.registry.get_entity("main_camera").map(|cam_ent| {

@@ -27,6 +27,17 @@ pub enum GenCommand {
     DeleteEntity {
         name: String,
     },
+
+    // Tier 2b: Batch mutations
+    SpawnBatch {
+        entities: Vec<SpawnPrimitiveCmd>,
+    },
+    ModifyBatch {
+        entities: Vec<ModifyEntityCmd>,
+    },
+    DeleteBatch {
+        names: Vec<String>,
+    },
     SetCamera(CameraCmd),
     SetLight(SetLightCmd),
     SetEnvironment(EnvironmentCmd),
@@ -647,6 +658,11 @@ pub enum GenResponse {
     },
     Deleted {
         name: String,
+    },
+
+    // Batch results
+    BatchResult {
+        results: Vec<String>,
     },
     CameraSet,
     LightSet {

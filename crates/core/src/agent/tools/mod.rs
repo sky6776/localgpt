@@ -797,6 +797,18 @@ pub fn extract_tool_detail(tool_name: &str, arguments: &str) -> Option<String> {
             let shape = args.get("shape").and_then(|v| v.as_str()).unwrap_or("?");
             name.map(|n| format!("{} ({})", n, shape))
         }
+        "gen_spawn_batch" => args
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .map(|arr| format!("{} entities", arr.len())),
+        "gen_modify_batch" => args
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .map(|arr| format!("{} entities", arr.len())),
+        "gen_delete_batch" => args
+            .get("names")
+            .and_then(|v| v.as_array())
+            .map(|arr| format!("{} entities", arr.len())),
         "gen_spawn_mesh" => args
             .get("name")
             .and_then(|v| v.as_str())

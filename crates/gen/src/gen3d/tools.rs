@@ -23,6 +23,10 @@ pub fn create_gen_tools(bridge: Arc<GenBridge>) -> Vec<Box<dyn Tool>> {
         Box::new(GenSpawnPrimitiveTool::new(bridge.clone())),
         Box::new(GenModifyEntityTool::new(bridge.clone())),
         Box::new(GenDeleteEntityTool::new(bridge.clone())),
+        // Batch tools (more efficient than multiple single calls)
+        Box::new(GenSpawnBatchTool::new(bridge.clone())),
+        Box::new(GenModifyBatchTool::new(bridge.clone())),
+        Box::new(GenDeleteBatchTool::new(bridge.clone())),
         Box::new(GenSetCameraTool::new(bridge.clone())),
         Box::new(GenSetLightTool::new(bridge.clone())),
         Box::new(GenSetEnvironmentTool::new(bridge.clone())),
@@ -538,6 +542,369 @@ impl Tool for GenDeleteEntityTool {
 
         match self.bridge.send(GenCommand::DeleteEntity { name }).await? {
             GenResponse::Deleted { name } => Ok(format!("Deleted '{}'", name)),
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_spawn_batch
+// ===========================================================================
+
+struct GenSpawnBatchTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenSpawnBatchTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenSpawnBatchTool {
+    fn name(&self) -> &str {
+        "gen_spawn_batch"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_spawn_batch".into(),
+            description: "Spawn multiple primitives in a single call. More efficient than repeated gen_spawn_primitive calls when creating multiple entities.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "entities": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Unique name for this entity"
+                                },
+                                "shape": {
+                                    "type": "string",
+                                    "enum": ["Cuboid", "Sphere", "Cylinder", "Cone", "Capsule", "Torus", "Plane"],
+                                    "description": "Primitive shape type"
+                                },
+                                "dimensions": {
+                                    "type": "object",
+                                    "description": "Shape-specific dimensions"
+                                },
+                                "position": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "default": [0, 0, 0],
+                                    "description": "Position [x, y, z]"
+                                },
+                                "rotation_degrees": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "default": [0, 0, 0],
+                                    "description": "Euler angles in degrees"
+                                },
+                                "scale": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "default": [1, 1, 1],
+                                    "description": "Scale [x, y, z]"
+                                },
+                                "color": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "default": [0.8, 0.8, 0.8, 1.0],
+                                    "description": "RGBA color"
+                                },
+                                "metallic": {"type": "number", "default": 0.0},
+                                "roughness": {"type": "number", "default": 0.5},
+                                "emissive": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "default": [0, 0, 0, 0],
+                                    "description": "Emissive RGBA color"
+                                },
+                                "alpha_mode": {"type": "string"},
+                                "unlit": {"type": "boolean"},
+                                "parent": {"type": "string"}
+                            },
+                            "required": ["name", "shape"]
+                        },
+                        "description": "Array of entity specifications (same format as gen_spawn_primitive)"
+                    }
+                },
+                "required": ["entities"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+        let entities_val = args
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid entities array"))?;
+
+        let mut entities = Vec::with_capacity(entities_val.len());
+        for entity_val in entities_val {
+            let cmd = SpawnPrimitiveCmd {
+                name: entity_val["name"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Missing name in entity"))?
+                    .to_string(),
+                shape: serde_json::from_value(entity_val["shape"].clone())?,
+                dimensions: entity_val
+                    .get("dimensions")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f as f32)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                position: parse_f32_array(&entity_val["position"], [0.0, 0.0, 0.0]),
+                rotation_degrees: parse_f32_array(&entity_val["rotation_degrees"], [0.0, 0.0, 0.0]),
+                scale: parse_f32_array(&entity_val["scale"], [1.0, 1.0, 1.0]),
+                color: parse_f32_4(&entity_val["color"], [0.8, 0.8, 0.8, 1.0]),
+                metallic: entity_val["metallic"].as_f64().unwrap_or(0.0) as f32,
+                roughness: entity_val["roughness"].as_f64().unwrap_or(0.5) as f32,
+                emissive: parse_f32_4(&entity_val["emissive"], [0.0, 0.0, 0.0, 0.0]),
+                alpha_mode: entity_val
+                    .get("alpha_mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                unlit: entity_val.get("unlit").and_then(|v| v.as_bool()),
+                parent: entity_val["parent"].as_str().map(|s| s.to_string()),
+            };
+            entities.push(cmd);
+        }
+
+        match self
+            .bridge
+            .send(GenCommand::SpawnBatch { entities })
+            .await?
+        {
+            GenResponse::BatchResult { results } => {
+                let success_count = results.iter().filter(|r| r.starts_with("Created:")).count();
+                Ok(format!(
+                    "Batch spawn: {} entities processed\n{}",
+                    success_count,
+                    results.join("\n")
+                ))
+            }
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_modify_batch
+// ===========================================================================
+
+struct GenModifyBatchTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenModifyBatchTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenModifyBatchTool {
+    fn name(&self) -> &str {
+        "gen_modify_batch"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_modify_batch".into(),
+            description: "Modify multiple entities in a single call. More efficient than repeated gen_modify_entity calls.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "entities": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Name of entity to modify"
+                                },
+                                "position": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "New position [x, y, z]"
+                                },
+                                "rotation_degrees": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "New rotation in degrees"
+                                },
+                                "scale": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "New scale [x, y, z]"
+                                },
+                                "color": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "New RGBA color"
+                                },
+                                "metallic": {"type": "number"},
+                                "roughness": {"type": "number"},
+                                "emissive": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "New emissive RGBA color"
+                                },
+                                "alpha_mode": {"type": "string"},
+                                "unlit": {"type": "boolean"},
+                                "double_sided": {"type": "boolean"},
+                                "reflectance": {"type": "number"},
+                                "visible": {"type": "boolean"},
+                                "parent": {"type": "string"}
+                            },
+                            "required": ["name"]
+                        },
+                        "description": "Array of entity modifications"
+                    }
+                },
+                "required": ["entities"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+        let entities_val = args
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid entities array"))?;
+
+        let mut entities = Vec::with_capacity(entities_val.len());
+        for entity_val in entities_val {
+            let cmd = ModifyEntityCmd {
+                name: entity_val["name"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Missing name in entity"))?
+                    .to_string(),
+                position: parse_opt_f32_array(&entity_val["position"]),
+                rotation_degrees: parse_opt_f32_array(&entity_val["rotation_degrees"]),
+                scale: parse_opt_f32_array(&entity_val["scale"]),
+                color: parse_opt_f32_4(&entity_val["color"]),
+                metallic: entity_val["metallic"].as_f64().map(|v| v as f32),
+                roughness: entity_val["roughness"].as_f64().map(|v| v as f32),
+                emissive: parse_opt_f32_4(&entity_val["emissive"]),
+                alpha_mode: entity_val
+                    .get("alpha_mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                unlit: entity_val.get("unlit").and_then(|v| v.as_bool()),
+                double_sided: entity_val.get("double_sided").and_then(|v| v.as_bool()),
+                reflectance: entity_val
+                    .get("reflectance")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32),
+                visible: entity_val["visible"].as_bool(),
+                parent: if entity_val.get("parent").is_some() {
+                    Some(entity_val["parent"].as_str().map(|s| s.to_string()))
+                } else {
+                    None
+                },
+            };
+            entities.push(cmd);
+        }
+
+        match self
+            .bridge
+            .send(GenCommand::ModifyBatch { entities })
+            .await?
+        {
+            GenResponse::BatchResult { results } => {
+                let success_count = results
+                    .iter()
+                    .filter(|r| r.starts_with("Modified:"))
+                    .count();
+                Ok(format!(
+                    "Batch modify: {} entities processed\n{}",
+                    success_count,
+                    results.join("\n")
+                ))
+            }
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_delete_batch
+// ===========================================================================
+
+struct GenDeleteBatchTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenDeleteBatchTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenDeleteBatchTool {
+    fn name(&self) -> &str {
+        "gen_delete_batch"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_delete_batch".into(),
+            description: "Delete multiple entities in a single call. More efficient than repeated gen_delete_entity calls.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of entity names to delete"
+                    }
+                },
+                "required": ["names"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &str) -> Result<String> {
+        let args: Value = serde_json::from_str(arguments)?;
+        let names_val = args
+            .get("names")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid names array"))?;
+
+        let names: Vec<String> = names_val
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+
+        if names.is_empty() {
+            return Err(anyhow::anyhow!("Empty names array"));
+        }
+
+        match self.bridge.send(GenCommand::DeleteBatch { names }).await? {
+            GenResponse::BatchResult { results } => {
+                let success_count = results.iter().filter(|r| r.starts_with("Deleted:")).count();
+                Ok(format!(
+                    "Batch delete: {} entities processed\n{}",
+                    success_count,
+                    results.join("\n")
+                ))
+            }
             GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
             other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
         }
