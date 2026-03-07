@@ -30,7 +30,13 @@ pub async fn run_mcp_stdio_server(tools: Vec<Box<dyn Tool>>, server_name: &str) 
 
     loop {
         line.clear();
-        let bytes_read = reader.read_line(&mut line).await?;
+        let bytes_read = tokio::select! {
+            result = reader.read_line(&mut line) => result?,
+            _ = tokio::signal::ctrl_c() => {
+                info!("MCP server: received Ctrl+C, shutting down");
+                break;
+            }
+        };
         if bytes_read == 0 {
             info!("MCP server: stdin closed, shutting down");
             break;
