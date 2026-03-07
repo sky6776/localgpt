@@ -502,6 +502,7 @@ fn main() -> Result<()> {
     if cli.mcp_server {
         // MCP server mode: Bevy on main thread, MCP stdio server on background thread
         let bridge_for_mcp = bridge.clone();
+        let mcp_config = config.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -509,7 +510,7 @@ fn main() -> Result<()> {
                 .expect("Failed to build tokio runtime for MCP server");
 
             rt.block_on(async move {
-                if let Err(e) = mcp_server::run_mcp_server(bridge_for_mcp).await {
+                if let Err(e) = mcp_server::run_mcp_server(bridge_for_mcp, mcp_config).await {
                     tracing::error!("MCP server error: {}", e);
                 }
                 // MCP client disconnected — exit the process

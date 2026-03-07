@@ -1,7 +1,12 @@
-//! MCP server for LocalGPT Gen — exposes gen tools over stdio JSON-RPC.
+//! MCP server for LocalGPT Gen — exposes gen tools + core tools over stdio JSON-RPC.
 //!
-//! This allows external CLI backends (gemini-cli, claude cli, codex) to
-//! drive the Bevy scene by connecting to localgpt-gen as an MCP server.
+//! This allows external CLI backends (gemini-cli, claude cli, codex) and
+//! MCP-capable editors (VS Code, Zed, Cursor) to drive the Bevy scene.
+//!
+//! Exposed tools:
+//! - All gen tools (spawn, modify, camera, audio, behaviors, world, etc.)
+//! - memory_search, memory_get (LocalGPT memory system)
+//! - web_fetch, web_search (research during scene building)
 //!
 //! Protocol: MCP (Model Context Protocol) over stdio, JSON-RPC 2.0.
 //! One JSON message per line on stdin/stdout.
@@ -14,6 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, info};
 
 use localgpt_core::agent::tools::Tool;
+use localgpt_core::config::Config;
 
 use crate::gen3d::GenBridge;
 
@@ -21,8 +27,8 @@ use crate::gen3d::GenBridge;
 ///
 /// Reads JSON-RPC messages from stdin, dispatches to gen tools via the bridge,
 /// and writes responses to stdout. Runs until stdin is closed.
-pub async fn run_mcp_server(bridge: Arc<GenBridge>) -> Result<()> {
-    let tools = crate::gen3d::tools::create_gen_tools(bridge);
+pub async fn run_mcp_server(bridge: Arc<GenBridge>, config: Config) -> Result<()> {
+    let tools = create_mcp_tools(bridge, &config)?;
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -135,6 +141,33 @@ fn handle_tools_list(tools: &[Box<dyn Tool>]) -> Result<Value, Value> {
         .collect();
 
     Ok(json!({ "tools": tool_defs }))
+}
+
+/// Create the combined tool set for the MCP server:
+/// gen tools + safe core tools (memory_search, memory_get, web_fetch, web_search).
+///
+/// CLI tools (bash, read_file, write_file, edit_file) are excluded because
+/// external CLI backends already have their own file/shell tools.
+fn create_mcp_tools(bridge: Arc<GenBridge>, config: &Config) -> Result<Vec<Box<dyn Tool>>> {
+    use localgpt_core::agent::tools::create_safe_tools;
+    use localgpt_core::memory::MemoryManager;
+
+    // Core tools: memory_search, memory_get, web_fetch, web_search
+    let memory = MemoryManager::new_with_agent(&config.memory, "gen-mcp")?;
+    let memory = Arc::new(memory);
+    let mut tools = create_safe_tools(config, Some(memory))?;
+
+    // Gen tools: all 28 scene manipulation tools
+    tools.extend(crate::gen3d::tools::create_gen_tools(bridge));
+
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    info!(
+        "MCP server: {} tools available: {:?}",
+        tools.len(),
+        tool_names
+    );
+
+    Ok(tools)
 }
 
 async fn handle_tools_call(tools: &[Box<dyn Tool>], params: &Value) -> Result<Value, Value> {
