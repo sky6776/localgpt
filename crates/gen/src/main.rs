@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 mod avatar_tools;
 mod gen3d;
+mod mcp_server;
 
 /// Result of handling a slash command.
 enum CommandResult {
@@ -452,6 +453,10 @@ struct Cli {
     /// Control an external app (URL) instead of running local window
     #[arg(long)]
     control: Option<String>,
+
+    /// Run as MCP server (stdio) — exposes gen tools for external CLI backends
+    #[arg(long)]
+    mcp_server: bool,
 }
 
 fn main() -> Result<()> {
@@ -493,6 +498,28 @@ fn main() -> Result<()> {
 
     // Create the channel pair
     let (bridge, channels) = gen3d::create_gen_channels();
+
+    if cli.mcp_server {
+        // MCP server mode: Bevy on main thread, MCP stdio server on background thread
+        let bridge_for_mcp = bridge.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to build tokio runtime for MCP server");
+
+            rt.block_on(async move {
+                if let Err(e) = mcp_server::run_mcp_server(bridge_for_mcp).await {
+                    tracing::error!("MCP server error: {}", e);
+                }
+                // MCP client disconnected — exit the process
+                std::process::exit(0);
+            });
+        });
+
+        // Run Bevy on the main thread
+        return run_bevy_app(channels, workspace, initial_scene);
+    }
 
     // Clone values for the background thread
     let agent_id = cli.agent;

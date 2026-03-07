@@ -30,9 +30,6 @@ This document tracks feature parity across ten implementations of the personal A
 - ✅ Implemented
 - 🚧 Partial (in progress or incomplete)
 - ❌ Not implemented
-- 🔮 Planned (in scope but not started)
-- 🚫 Out of scope (intentionally skipped)
-- ➖ N/A (not applicable)
 
 ---
 

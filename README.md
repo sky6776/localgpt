@@ -12,6 +12,8 @@ A local device focused AI assistant built in Rust — persistent memory, autonom
 
 `cargo install localgpt`
 
+> **⚠️ AI-Generated Documentation:** The `docs/` folder contains documentation generated and maintained by AI assistants. While efforts are made to ensure accuracy, details may be outdated or incorrect. Please verify with the source code for the most current information.
+
 ## Why LocalGPT?
 
 - **Single binary** — no Node.js, Docker, or Python required
