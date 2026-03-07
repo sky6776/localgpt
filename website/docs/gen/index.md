@@ -50,11 +50,12 @@ The agent receives your prompt and iteratively builds a world — spawning shape
 
 ## Features
 
-- **[Tools](/docs/gen/tools)** — 26 specialized tools for scene creation
+- **[Tools](/docs/gen/tools)** — 31 specialized tools for scene creation
 - **[Behaviors](/docs/gen/behaviors)** — Data-driven animations (orbit, spin, bounce, etc.)
 - **[Audio](/docs/gen/audio)** — Procedural environmental audio with spatial emitters
 - **[World Skills](/docs/gen/world-skills)** — Save and load complete worlds as reusable skills
 - **Undo/Redo** — Full undo/redo support for all scene edits with persistence
+- **Streaming Chat** — Real-time tool call display and streaming responses
 
 ## Current Limitations
 

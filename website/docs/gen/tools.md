@@ -4,7 +4,7 @@ sidebar_position: 14.1
 
 # Gen Tools Reference
 
-The gen agent has access to 26 specialized tools organized by category.
+The gen agent has access to 31 specialized tools organized by category.
 
 ## Scene Query
 
@@ -19,6 +19,7 @@ The gen agent has access to 26 specialized tools organized by category.
 | Tool | Description |
 |------|-------------|
 | `gen_spawn_primitive` | Spawn geometric primitives (sphere, cube, cylinder, torus, etc.) |
+| `gen_spawn_entities` | Spawn multiple entities in a single batch call |
 | `gen_spawn_mesh` | Spawn custom mesh geometry |
 | `gen_load_gltf` | Load entities from a glTF/GLB file |
 
@@ -27,7 +28,9 @@ The gen agent has access to 26 specialized tools organized by category.
 | Tool | Description |
 |------|-------------|
 | `gen_modify_entity` | Modify entity transform, material, or visibility |
+| `gen_modify_entities` | Modify multiple entities in a single batch call |
 | `gen_delete_entity` | Remove an entity and its children |
+| `gen_delete_entities` | Delete multiple entities in a single batch call |
 
 ## Camera & Environment
 
@@ -43,6 +46,7 @@ The gen agent has access to 26 specialized tools organized by category.
 |------|-------------|
 | `gen_export_screenshot` | Export high-res image to file |
 | `gen_export_gltf` | Export scene as glTF/GLB file |
+| `gen_export_world` | Export world with localized mesh assets for portability |
 
 ## Behaviors
 
@@ -82,3 +86,4 @@ Save and load complete worlds as reusable skills. See [World Skills](/docs/gen/w
 |------|-------------|
 | `gen_undo` | Undo the last scene edit (spawn, delete, or modify) |
 | `gen_redo` | Redo a previously undone edit |
+| `gen_undo_info` | Show undo stack status and available operations |

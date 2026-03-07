@@ -1044,12 +1044,8 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         total_wrapped_lines += wrapped_count;
     }
 
-    let max_lines = chunks[0].height.saturating_sub(2) as u16;
-    let scroll_y = if total_wrapped_lines as u16 > max_lines {
-        total_wrapped_lines as u16 - max_lines
-    } else {
-        0
-    };
+    let max_lines = chunks[0].height.saturating_sub(2);
+    let scroll_y = (total_wrapped_lines as u16).saturating_sub(max_lines);
 
     let messages_block = Paragraph::new(lines)
         .block(Block::default().title(title).borders(Borders::ALL))

@@ -6,7 +6,11 @@ All notable changes to LocalGPT are documented in this file.
 
 ### Added
 
-- **CLI TUI mode** — interactive terminal user interface with streaming responses and session management via `localgpt tui`.
+- **CLI TUI slash commands and line editing** — `/help`, `/clear`, `/exit`, `/model`, `/session` commands with readline-style editing (Ctrl+A/E, arrow keys, history).
+- **Gen streaming chat** — real-time tool call display and streaming responses in Gen mode for better visibility into scene building.
+- **Gen batch entity operations** — `gen_spawn_entities` tool for efficient multi-entity creation in a single call.
+- **Gen on-demand export** — `gen_export_world` tool with mesh asset localization for portable scene exports.
+- **Gen human-readable filenames** — export filenames now use `YYYY-MM-DD_HH-MM-SS` format instead of timestamps.
 - **Gen audio undo/redo** — audio emitter commands now support full undo/redo with `gen_audio_emitter` and `gen_modify_audio` operations reversible.
 - **Gen undo/redo system** — full undo/redo support with stable entity IDs, LLM tools (`gen_undo`, `gen_redo`), and persistence via `history.jsonl`. Covers entities, lights, behaviors, camera, and environment.
 - **Gen behavior system** — declarative entity animations: `orbit`, `spin`, `bob`, `look_at`, `pulse`, `path_follow`, `bounce`. Behaviors stack and persist through save/load.
@@ -31,9 +35,11 @@ All notable changes to LocalGPT are documented in this file.
 
 - **Mobile apps restructured** — `apps/ios` renamed to `apps/apple` for multi-platform support (iOS + macOS).
 - **OAuth providers removed** — all OAuth provider implementations removed for simplified authentication.
+- **Gen glTF export format** — switched to JSON format with version compatibility for better interoperability.
 
 ### Fixed
 
+- **Core provider error messages** — API errors now show actual provider name instead of generic label for easier debugging.
 - **Gen visibility persistence** — visibility state now persists correctly through save/load and undo snapshots.
 - **Gen camera FOV** — saves actual camera FOV instead of hardcoded 45 degrees.
 - **Gen light saving** — light components save on any entity type, not just `GenEntityType::Light`.

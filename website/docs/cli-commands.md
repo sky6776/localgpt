@@ -13,6 +13,7 @@ localgpt <COMMAND>
 
 Commands:
   chat        Interactive multi-turn conversation
+  tui         Launch terminal UI (TUI) with streaming display
   ask         Single question and response
   gen         Launch world generation mode (Bevy renderer)
   daemon      Manage the background daemon
@@ -49,6 +50,7 @@ Options:
 | Command | Description |
 |---------|-------------|
 | [`chat`](/docs/cli-chat) | Interactive multi-turn conversation with session support |
+| `tui` | Terminal UI with streaming responses and slash commands |
 | [`ask`](/docs/cli-ask) | Single-turn question answering |
 | [`gen`](/docs/gen) | Launch world generation mode (Bevy renderer) |
 | [`daemon`](/docs/cli-daemon) | Start/stop/status of the background daemon |
@@ -69,6 +71,9 @@ Options:
 ```bash
 # Start an interactive chat
 localgpt chat
+
+# Launch the terminal UI
+localgpt tui
 
 # Ask a single question
 localgpt ask "What is the capital of France?"
