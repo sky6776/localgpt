@@ -10,13 +10,13 @@ LocalGPT Gen can run as an [MCP](https://modelcontextprotocol.io/) (Model Contex
 
 When using LocalGPT Gen in its default interactive mode, the built-in LLM agent calls gen tools directly inside the same process. But if you want to use a different AI backend — Claude CLI, Gemini CLI, Codex, or an editor's built-in AI — those tools aren't accessible because they run in separate processes.
 
-MCP solves this. It's a standard protocol that these tools already support. By running `localgpt-gen --mcp-server`, the Bevy window opens and all gen tools become available to any MCP client over stdio. The AI backend becomes the orchestrator — it manages the conversation, calls tools, and drives the scene building.
+MCP solves this. It's a standard protocol that these tools already support. By running `localgpt-gen mcp-server`, the Bevy window opens and all gen tools become available to any MCP client over stdio. The AI backend becomes the orchestrator — it manages the conversation, calls tools, and drives the scene building.
 
 ## Quick Start
 
 ```bash
 # Start Gen as an MCP server (Bevy window opens, tools served over stdio)
-localgpt-gen --mcp-server
+localgpt-gen mcp-server
 ```
 
 Then configure your AI tool to connect to it (see sections below).
@@ -65,7 +65,7 @@ Add to `~/.claude.json` (or project-level `.claude/settings.json`):
   "mcpServers": {
     "localgpt-gen": {
       "command": "localgpt-gen",
-      "args": ["--mcp-server"]
+      "args": ["mcp-server"]
     }
   }
 }
@@ -89,7 +89,7 @@ Add to `~/.gemini/settings.json`:
   "mcpServers": {
     "localgpt-gen": {
       "command": "localgpt-gen",
-      "args": ["--mcp-server"]
+      "args": ["mcp-server"]
     }
   }
 }
@@ -104,7 +104,7 @@ Add to `~/.codex/config.json`:
   "mcpServers": {
     "localgpt-gen": {
       "command": "localgpt-gen",
-      "args": ["--mcp-server"]
+      "args": ["mcp-server"]
     }
   }
 }
@@ -120,7 +120,7 @@ VS Code supports MCP servers through its Copilot agent mode. Add to your workspa
     "servers": {
       "localgpt-gen": {
         "command": "localgpt-gen",
-        "args": ["--mcp-server"]
+        "args": ["mcp-server"]
       }
     }
   }
@@ -141,7 +141,7 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
     "localgpt-gen": {
       "command": {
         "path": "localgpt-gen",
-        "args": ["--mcp-server"]
+        "args": ["mcp-server"]
       }
     }
   }
@@ -159,7 +159,7 @@ Add to your Cursor MCP configuration (`.cursor/mcp.json` in your project or glob
   "mcpServers": {
     "localgpt-gen": {
       "command": "localgpt-gen",
-      "args": ["--mcp-server"]
+      "args": ["mcp-server"]
     }
   }
 }
@@ -174,7 +174,7 @@ Add to your Windsurf MCP configuration (`~/.codeium/windsurf/mcp_config.json`):
   "mcpServers": {
     "localgpt-gen": {
       "command": "localgpt-gen",
-      "args": ["--mcp-server"]
+      "args": ["mcp-server"]
     }
   }
 }
@@ -200,7 +200,7 @@ Add to your Windsurf MCP configuration (`~/.codeium/windsurf/mcp_config.json`):
 
 In MCP mode, the **AI backend is the orchestrator**. It manages the conversation, decides which tools to call, and drives scene building. LocalGPT Gen provides the runtime (Bevy 3D engine + memory database) and exposes it through standard MCP tools.
 
-1. The AI backend spawns `localgpt-gen --mcp-server` as a child process
+1. The AI backend spawns `localgpt-gen mcp-server` as a child process
 2. MCP handshake happens over stdio (JSON-RPC 2.0, one message per line)
 3. The backend discovers all tools via `tools/list` (gen tools + memory + web)
 4. The AI reasons about the scene and calls tools as needed — `gen_spawn_primitive`, `memory_search`, `gen_screenshot`, etc.
@@ -214,7 +214,7 @@ This is different from LocalGPT Gen's interactive mode, where LocalGPT's own age
 You can load an existing scene while starting the MCP server:
 
 ```bash
-localgpt-gen --mcp-server --scene ./my-scene.glb
+localgpt-gen mcp-server --scene ./my-scene.glb
 ```
 
 The AI backend can then modify the pre-loaded scene.
@@ -229,7 +229,7 @@ localgpt mcp-server
 
 This exposes only the core tools: `memory_search`, `memory_get`, `memory_save`, `memory_log`, `web_fetch`, and `web_search`. No Bevy window, no gen tools.
 
-Configure it the same way as `localgpt-gen --mcp-server`:
+Configure it the same way as `localgpt-gen mcp-server`:
 
 ```json
 {
@@ -255,7 +255,7 @@ The MCP server initializes LocalGPT's memory system using the workspace configur
 
 ## Tips
 
-- **Verbose logging**: Add `--verbose` to see MCP protocol messages and tool list in stderr: `localgpt-gen --mcp-server --verbose`
+- **Verbose logging**: Add `--verbose` to see MCP protocol messages and tool list in stderr: `localgpt-gen mcp-server --verbose`
 - **Binary path**: If `localgpt-gen` is not in your `$PATH`, use the full path (e.g., `/Users/you/.cargo/bin/localgpt-gen`) in the MCP server configuration
 - **One instance**: Each MCP server config spawns its own Bevy window. Only one instance should run at a time per display
 - **Screenshots**: The AI can take screenshots via `gen_screenshot` to see what it built and course-correct — this works the same as in interactive mode

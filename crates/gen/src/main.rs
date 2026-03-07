@@ -4,7 +4,7 @@
 //! and spawns the LLM agent loop on a background tokio runtime.
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use localgpt_core::agent::tools::extract_tool_detail;
 use localgpt_core::agent::{Agent, list_sessions_for_agent, search_sessions_for_agent};
@@ -435,28 +435,36 @@ async fn streaming_chat(agent: &mut Agent, input: &str) -> Result<()> {
 #[command(name = "localgpt-gen")]
 #[command(about = "LocalGPT Gen — AI-driven 3D scene generation")]
 struct Cli {
-    /// Initial prompt to send (optional — starts interactive if omitted)
+    #[command(subcommand)]
+    command: Option<GenSubcommand>,
+
+    /// Initial prompt (interactive mode only)
     prompt: Option<String>,
 
     /// Agent ID to use
-    #[arg(short, long, default_value = "gen")]
+    #[arg(short, long, global = true, default_value = "gen")]
     agent: String,
 
     /// Enable verbose logging
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     verbose: bool,
 
     /// Load a glTF/GLB scene at startup
-    #[arg(short = 's', long)]
+    #[arg(short = 's', long, global = true)]
     scene: Option<String>,
+}
 
-    /// Control an external app (URL) instead of running local window
-    #[arg(long)]
-    control: Option<String>,
-
-    /// Run as MCP server (stdio) — exposes gen tools for external CLI backends
-    #[arg(long)]
-    mcp_server: bool,
+#[derive(Subcommand)]
+enum GenSubcommand {
+    /// Run as MCP server (stdio) — Bevy window + gen tools over MCP
+    McpServer,
+    /// Control an external avatar (headless, no Bevy window)
+    Control {
+        /// URL of the external app
+        url: String,
+        /// Initial prompt
+        prompt: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -477,75 +485,84 @@ fn main() -> Result<()> {
     let config = localgpt_core::config::Config::load()?;
     let workspace = config.workspace_path();
 
-    // If --control is set, run headless bridge mode
-    if let Some(url) = cli.control {
-        tracing::info!("Starting Gen in CONTROL mode (headless) -> {}", url);
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to build tokio runtime");
-
-        return rt.block_on(async move {
-            run_headless_control_loop(&url, &cli.agent, cli.prompt, config).await
-        });
-    }
-
-    // Resolve initial scene path if provided
-    let initial_scene = cli
-        .scene
-        .as_ref()
-        .and_then(|path| gen3d::plugin::resolve_gltf_path(path, &workspace));
-
-    // Create the channel pair
-    let (bridge, channels) = gen3d::create_gen_channels();
-
-    if cli.mcp_server {
-        // MCP server mode: Bevy on main thread, MCP stdio server on background thread
-        let bridge_for_mcp = bridge.clone();
-        let mcp_config = config.clone();
-        std::thread::spawn(move || {
+    // Dispatch based on subcommand
+    match cli.command {
+        Some(GenSubcommand::Control { url, prompt }) => {
+            // Headless bridge mode — no Bevy window
+            tracing::info!("Starting Gen in CONTROL mode (headless) -> {}", url);
+            let agent_id = cli.agent;
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .expect("Failed to build tokio runtime for MCP server");
+                .expect("Failed to build tokio runtime");
 
-            rt.block_on(async move {
-                if let Err(e) = mcp_server::run_mcp_server(bridge_for_mcp, mcp_config).await {
-                    tracing::error!("MCP server error: {}", e);
-                }
-                // MCP client disconnected — exit the process
-                std::process::exit(0);
+            rt.block_on(
+                async move { run_headless_control_loop(&url, &agent_id, prompt, config).await },
+            )
+        }
+
+        Some(GenSubcommand::McpServer) => {
+            // MCP server mode: Bevy on main thread, MCP stdio server on background thread
+            let initial_scene = cli
+                .scene
+                .as_ref()
+                .and_then(|path| gen3d::plugin::resolve_gltf_path(path, &workspace));
+
+            let (bridge, channels) = gen3d::create_gen_channels();
+            let bridge_for_mcp = bridge.clone();
+            let mcp_config = config.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to build tokio runtime for MCP server");
+
+                rt.block_on(async move {
+                    if let Err(e) = mcp_server::run_mcp_server(bridge_for_mcp, mcp_config).await {
+                        tracing::error!("MCP server error: {}", e);
+                    }
+                    // MCP client disconnected — exit the process
+                    std::process::exit(0);
+                });
             });
-        });
 
-        // Run Bevy on the main thread
-        return run_bevy_app(channels, workspace, initial_scene);
+            // Run Bevy on the main thread
+            run_bevy_app(channels, workspace, initial_scene)
+        }
+
+        None => {
+            // Interactive mode (default)
+            let initial_scene = cli
+                .scene
+                .as_ref()
+                .and_then(|path| gen3d::plugin::resolve_gltf_path(path, &workspace));
+
+            let (bridge, channels) = gen3d::create_gen_channels();
+            let agent_id = cli.agent;
+            let initial_prompt = cli.prompt;
+            let bridge_for_agent = bridge.clone();
+
+            // Spawn tokio runtime + agent loop on a background thread
+            // (Bevy must own the main thread for windowing/GPU on macOS)
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to build tokio runtime for gen agent");
+
+                rt.block_on(async move {
+                    if let Err(e) =
+                        run_agent_loop(bridge_for_agent, &agent_id, initial_prompt, config).await
+                    {
+                        tracing::error!("Gen agent loop error: {}", e);
+                    }
+                });
+            });
+
+            // Run Bevy on the main thread
+            run_bevy_app(channels, workspace, initial_scene)
+        }
     }
-
-    // Clone values for the background thread
-    let agent_id = cli.agent;
-    let initial_prompt = cli.prompt;
-    let bridge_for_agent = bridge.clone();
-
-    // Spawn tokio runtime + agent loop on a background thread
-    // (Bevy must own the main thread for windowing/GPU on macOS)
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to build tokio runtime for gen agent");
-
-        rt.block_on(async move {
-            if let Err(e) =
-                run_agent_loop(bridge_for_agent, &agent_id, initial_prompt, config).await
-            {
-                tracing::error!("Gen agent loop error: {}", e);
-            }
-        });
-    });
-
-    // Run Bevy on the main thread
-    run_bevy_app(channels, workspace, initial_scene)
 }
 
 /// Set up and run the Bevy application on the main thread.

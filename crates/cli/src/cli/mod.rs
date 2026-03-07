@@ -8,7 +8,6 @@ pub mod daemon;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 pub mod doctor;
-#[cfg(feature = "gen")]
 pub mod gen3d;
 pub mod hooks;
 pub mod init;
@@ -68,8 +67,7 @@ pub enum Commands {
     #[cfg(feature = "desktop")]
     Desktop(desktop::DesktopArgs),
 
-    /// Launch 3D scene generation mode (Bevy renderer)
-    #[cfg(feature = "gen")]
+    /// Launch 3D scene generation mode (delegates to localgpt-gen)
     Gen(gen3d::GenArgs),
 
     /// Manage the daemon

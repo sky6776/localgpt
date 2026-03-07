@@ -17,8 +17,6 @@ path = "src/main.rs"
 default = ["desktop"]
 # Desktop GUI (eframe/egui). Disable for headless/server/Docker builds.
 desktop = ["eframe"]
-# 3D scene generation (Bevy). Separate binary; this feature gates CLI entry points.
-gen = []
 
 [dependencies]
 localgpt-core = { workspace = true }

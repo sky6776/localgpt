@@ -29,20 +29,9 @@ fn main() -> Result<()> {
         }
     }
 
-    // Handle Gen mode specially — Bevy must own the main thread (no tokio runtime here)
-    #[cfg(feature = "gen")]
+    // Handle Gen mode before tokio — it spawns a subprocess (sync)
     if let Commands::Gen(args) = cli.command {
-        // Initialize logging before handing off to Bevy
-        // Use "warn" by default for cleaner TUI, "debug" with --verbose
-        let log_level = if cli.verbose { "debug" } else { "warn" };
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level)),
-            )
-            .with_writer(std::io::stderr)
-            .init();
-        return crate::cli::gen3d::run(args, &cli.agent);
+        return crate::cli::gen3d::run(args, &cli.agent, cli.verbose);
     }
 
     // Handle daemon start/restart specially - must fork BEFORE starting Tokio runtime
@@ -93,7 +82,6 @@ async fn async_main(cli: Cli) -> Result<()> {
         Commands::Ask(args) => crate::cli::ask::run(args, &cli.agent).await,
         #[cfg(feature = "desktop")]
         Commands::Desktop(args) => crate::cli::desktop::run(args, &cli.agent),
-        #[cfg(feature = "gen")]
         Commands::Gen(_) => unreachable!("Gen is handled before tokio runtime starts"),
         Commands::Daemon(args) => crate::cli::daemon::run(args, &cli.agent).await,
         Commands::Memory(args) => crate::cli::memory::run(args, &cli.agent).await,

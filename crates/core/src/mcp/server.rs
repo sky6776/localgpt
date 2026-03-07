@@ -2,7 +2,7 @@
 //!
 //! Reads JSON-RPC 2.0 messages from stdin, dispatches tool calls,
 //! and writes responses to stdout. Used by both `localgpt mcp-server`
-//! and `localgpt-gen --mcp-server`.
+//! and `localgpt-gen mcp-server`.
 
 use anyhow::Result;
 use serde_json::{Value, json};
