@@ -54,6 +54,7 @@ The agent receives your prompt and iteratively builds a world — spawning shape
 - **[Behaviors](/docs/gen/behaviors)** — Data-driven animations (orbit, spin, bounce, etc.)
 - **[Audio](/docs/gen/audio)** — Procedural environmental audio with spatial emitters
 - **[World Skills](/docs/gen/world-skills)** — Save and load complete worlds as reusable skills
+- **[MCP Server](/docs/gen/mcp-server)** — Use gen tools from Claude CLI, Gemini CLI, VS Code, Zed, and other MCP clients
 - **Undo/Redo** — Full undo/redo support for all scene edits with persistence
 - **Streaming Chat** — Real-time tool call display and streaming responses
 

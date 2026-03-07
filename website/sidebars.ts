@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
         'gen/behaviors',
         'gen/audio',
         'gen/world-skills',
+        'gen/mcp-server',
       ],
     },
     {
