@@ -44,6 +44,11 @@ const sidebars: SidebarsConfig = {
       label: 'Reference',
       items: ['architecture', 'configuration', 'http-api'],
     },
+    {
+      type: 'category',
+      label: 'Ecosystem',
+      items: ['ecosystem'],
+    },
   ],
 };
 
