@@ -5,7 +5,7 @@ slug: /ecosystem
 
 # Feature Parity Matrix — Claw Ecosystem
 
-> **⚠️ AI-Generated Documentation:** This document was generated and is maintained by AI assistants. While efforts are made to ensure accuracy, some details may be outdated or incorrect. Please verify with the source repositories for the most current information.
+> **⚠️ AI-Generated Documentation:** This document was generated and is maintained by AI assistants. While efforts are made to ensure accuracy, many details must be outdated or incorrect as those projects are moving very fast. Please verify with the source repositories for the most current information.
 >
 > **Last updated:** 2026-03-07
 
@@ -16,7 +16,7 @@ This document tracks feature parity across ten implementations of the personal A
 | Project | Language | License | Repository |
 |---------|----------|---------|------------|
 | **OpenClaw** | TypeScript | MIT | https://github.com/openclaw/openclaw |
-| **IronClaw** | Rust | Apache 2.0 | https://github.com/nearai/ironclaw |
+| **IronClaw** | Rust | MIT/Apache 2.0 | https://github.com/nearai/ironclaw |
 | **LocalGPT** | Rust | Apache 2.0 | https://github.com/localgpt-app/localgpt |
 | **Moltis** | Rust | MIT | https://github.com/moltis-org/moltis |
 | **Nanobot** | Python | MIT | https://github.com/HKUDS/nanobot |
@@ -73,7 +73,7 @@ This document tracks feature parity across ten implementations of the personal A
 | Bonjour/mDNS discovery | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
 | Tailscale integration | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
 | Health check endpoints | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | |
-| `doctor` diagnostics | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | |
+| `doctor` diagnostics | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | |
 | Agent event broadcast | ✅ | 🚧 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | |
 | Channel health monitor | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | |
 | Presence system | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
@@ -97,10 +97,10 @@ This document tracks feature parity across ten implementations of the personal A
 | HTTP webhook | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | - | |
 | REPL (simple) | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | - | |
 | WASM channels | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | - | IronClaw innovation |
-| WhatsApp | ✅ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | P1 | |
+| WhatsApp | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | P1 | |
 | Telegram | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | - | MimiClaw: primary channel |
 | Discord | ✅ | ❌ | ✅ | 🚧 | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | P2 | |
-| Signal | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P2 | |
+| Signal | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P2 | |
 | Slack | ✅ | ✅ | ❌ | 🚧 | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | - | |
 | iMessage | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ | P3 | |
 | Linq | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | P3 | ZeroClaw only |
@@ -110,7 +110,7 @@ This document tracks feature parity across ten implementations of the personal A
 | Matrix | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P3 | ZeroClaw: E2EE support |
 | Mattermost | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P3 | |
 | Google Chat | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | P3 | |
-| MS Teams | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | P3 | |
+| MS Teams | ✅ | ❌ | ❌ | 🚧 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | P3 | |
 | Twitch | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | P3 | |
 | Voice Call | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | P3 | CoPaw: Twilio voice |
 | Nostr | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P3 | |
@@ -196,7 +196,7 @@ This document tracks feature parity across ten implementations of the personal A
 | `message send` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | P2 | |
 | `browser` | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P3 | |
 | `sandbox` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | - | |
-| `doctor` | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P2 | |
+| `doctor` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | P2 | |
 | `logs` | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | P3 | |
 | `update` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | P3 | MimiClaw: OTA updates |
 | `completion` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | P3 | |
@@ -280,7 +280,7 @@ This document tracks feature parity across ten implementations of the personal A
 | node-llama-cpp | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | - | N/A for Rust/Go/Zig/C |
 | llama.cpp (native) | ❌ | 🔮 | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | P3 | |
 | X.AI (Grok) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | - | |
-| GitHub Copilot | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | - | |
+| GitHub Copilot | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | - | |
 | CLI-based providers (subprocess) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | - | PicoClaw: claude-cli, codex-cli |
 | Kimi/Moonshot | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | - | |
 | DeepSeek | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | - | CoPaw: DeepSeek Reasoner |
@@ -572,7 +572,7 @@ This document tracks feature parity across ten implementations of the personal A
 | Docker: Chromium + Xvfb | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
 | Docker: init scripts | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | |
 | Browser: extraArgs config | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
-| Workspace crate count | ➖ | ~15 | 10 | 39 | ➖ | ➖ | ➖ | 2 | ➖ | ➖ | |
+| Workspace crate count | ➖ | 1 | 13 | 47 | ➖ | ➖ | ➖ | 2 | ➖ | ➖ | IronClaw: monolithic single crate |
 | Mobile build scripts | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ZeroClaw: ESP32/Nucleo firmware |
 | Nix/direnv support | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
 | mdBook documentation | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ | |
@@ -597,7 +597,7 @@ This document tracks feature parity across ten implementations of the personal A
 
 | Feature | OpenClaw | IronClaw | LocalGPT | Moltis | Nanobot | CoPaw | PicoClaw | ZeroClaw | NullClaw | Notes |
 |---------|----------|----------|----------|--------|---------|-------|----------|----------|----------|-------|
-| 3D rendering engine | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | LocalGPT: Bevy 0.15 |
+| 3D rendering engine | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | LocalGPT: Bevy 0.18 |
 | glTF/GLB scene loading | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
 | Entity spawning/modification tools | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
 | Procedural audio (FunDSP) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | |
@@ -622,7 +622,7 @@ This document tracks feature parity across ten implementations of the personal A
 - ✅ Multi-provider LLM
 
 **IronClaw additionally:**
-- ✅ TUI (Ratatui) + HTTP webhook + WASM sandbox
+- ✅ TUI (rustyline + termimad) + HTTP webhook + WASM sandbox
 - ✅ Web Control UI + WebChat + DM pairing
 - ✅ Gateway control plane + WebSocket
 - ✅ Docker sandbox + cron scheduling
@@ -644,7 +644,7 @@ This document tracks feature parity across ten implementations of the personal A
 
 **Moltis additionally:**
 - ✅ Gateway (Axum + WS + GraphQL)
-- ✅ Telegram channel + web dashboard
+- ✅ Telegram + WhatsApp channels + web dashboard
 - ✅ Docker + Apple Container sandbox
 - ✅ MCP support (stdio + HTTP/SSE)
 - ✅ 17 hook event types
@@ -711,7 +711,7 @@ This document tracks feature parity across ten implementations of the personal A
 - ✅ 0.5W power consumption
 
 ### P1 - High Priority
-- ❌ WhatsApp channel (IronClaw, Moltis, CoPaw)
+- ❌ WhatsApp channel (IronClaw, CoPaw)
 - ❌ OpenAI-compatible API (Moltis, CoPaw, PicoClaw, ZeroClaw, NullClaw)
 - ❌ Configuration hot-reload (IronClaw, PicoClaw, ZeroClaw, NullClaw)
 
@@ -721,7 +721,7 @@ This document tracks feature parity across ten implementations of the personal A
 - ❌ Web UI: channel status, config editing (LocalGPT, PicoClaw, ZeroClaw, NullClaw)
 
 ### P3 - Lower Priority
-- ❌ Discord/Signal/Matrix (IronClaw, Moltis)
+- ❌ Discord/Matrix (IronClaw, Moltis)
 - ❌ TTS/audio (IronClaw, LocalGPT, PicoClaw, ZeroClaw, NullClaw)
 - ❌ WASM sandbox (LocalGPT, Moltis, PicoClaw, NullClaw)
 - ❌ Plugin registry (LocalGPT, CoPaw, PicoClaw, ZeroClaw, NullClaw)
@@ -802,7 +802,7 @@ Git repository activity metrics as of 2026-03-06.
 2. **NEAR AI focus** — Primary provider with session-based auth
 3. **Tinfoil private inference** — Hardware-attested TEE provider
 4. **PostgreSQL + libSQL** — Dual database backend
-5. **Ratatui TUI** — Rich terminal UI with approval overlays
+5. **Rich terminal UI** — rustyline + termimad with approval overlays
 
 ### LocalGPT
 1. **Gen mode** — Bevy 3D scene generation + FunDSP procedural audio synthesis
@@ -824,7 +824,7 @@ Git repository activity metrics as of 2026-03-06.
 7. **A2UI Canvas** — Agent-controlled HTML UI for mobile/web
 8. **17 hook event types** — Comprehensive lifecycle hooks with circuit breaker
 9. **Zero unsafe code** — Workspace-level `deny(unsafe)` lint
-10. **39-crate workspace** — Highly modular architecture
+10. **47-crate workspace** — Highly modular architecture
 
 ### Nanobot
 1. **Ultra-lightweight Python** — ~4,000 lines of core code, minimal dependencies, fast to deploy
@@ -884,4 +884,8 @@ Git repository activity metrics as of 2026-03-06.
 8. **0.5W power** — USB power, runs 24/7 on minimal energy
 9. **Cron scheduling** — On-device cron for automated tasks
 
-These are intentional architectural choices reflecting different design priorities, not gaps to be filled.
+---
+
+## Credits
+
+- **IronClaw** ([ironclaw](https://github.com/nearai/ironclaw)) — Initial reference for this feature parity document. IronClaw's comprehensive feature matrix inspired the structure and categories used here.
