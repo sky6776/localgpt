@@ -160,15 +160,23 @@ const config: Config = {
           ],
         },
         {
-          title: 'YouTube',
+          title: 'Showcase',
           items: [
             {
-              label: 'LocalGPT',
-              href: 'https://www.youtube.com/@localgpt-app',
+              label: 'World Skills',
+              href: 'https://github.com/localgpt-app/workspace',
+            },
+            {
+              label: 'Proof of Video',
+              href: 'https://proofof.video/',
             },
             {
               label: 'Gen Gallery',
               href: 'https://www.youtube.com/@localgpt-gen',
+            },
+            {
+              label: 'LocalGPT',
+              href: 'https://www.youtube.com/@localgpt-app',
             },
           ],
         },
