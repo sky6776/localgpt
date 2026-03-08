@@ -24,9 +24,8 @@ const FeatureList: FeatureItem[] = [
     description: (
       <>
         Add ambient soundscapes (wind, rain, forest, ocean, cave, stream) and
-        spatial audio emitters attached to entities. Powered by{' '}
-        <a href="https://github.com/SamiPerttu/fundsp" target="_blank" rel="noopener noreferrer">FunDSP</a>
-        {' '}for real-time synthesis — no audio files required.
+        spatial audio emitters attached to entities. Real-time synthesis —
+        no audio files required.
       </>
     ),
   },
@@ -57,6 +56,16 @@ const FeatureList: FeatureItem[] = [
         Single Rust binary. All data stays on your machine — no cloud storage,
         no telemetry. Works with Claude CLI, Anthropic API, OpenAI, Ollama,
         and GLM. Just <code>cargo install localgpt-gen</code>.
+      </>
+    ),
+  },
+  {
+    title: 'MCP Server',
+    description: (
+      <>
+        Run as an MCP server to integrate with Claude CLI, Gemini CLI, Codex CLI,
+        and MCP-compatible editors. Drive the 3D window from your favorite AI
+        coding assistant.
       </>
     ),
   },

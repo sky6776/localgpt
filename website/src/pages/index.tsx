@@ -58,7 +58,7 @@ function HomepageHeader() {
         <p className="hero__subtitle">
           Build explorable 3D worlds with natural language — geometry, materials, lighting, audio, and behaviors.
           <br />
-          Open source, runs locally, powered by <a href="https://bevyengine.org/" target="_blank" rel="noopener noreferrer">Bevy</a>.
+          Open source, runs locally.
         </p>
         <div className={styles.buttons}>
           <Link
@@ -82,7 +82,7 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title="Home"
-      description="LocalGPT - Build explorable 3D worlds with natural language. Open source, runs locally, powered by Bevy.">
+      description="LocalGPT - Build explorable 3D worlds with natural language. Open source, runs locally.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

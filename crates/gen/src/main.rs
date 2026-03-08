@@ -744,6 +744,15 @@ async fn run_agent_loop(
         embedding_status
     );
     println!("Type /help for commands, /quit to exit\n");
+    println!("Scene Controls:");
+    println!("  WASD          Move (forward/back/strafe)");
+    println!("  Space         Move up");
+    println!("  Shift         Move down");
+    println!("  Right-click   Hold + drag to look around");
+    println!("  Scroll wheel  Adjust movement speed");
+    println!("  Tab           Toggle free-fly / avatar camera");
+    println!("  V             Toggle 1st/3rd person (avatar mode)");
+    println!();
 
     // If initial prompt given, send it
     if let Some(prompt) = initial_prompt {

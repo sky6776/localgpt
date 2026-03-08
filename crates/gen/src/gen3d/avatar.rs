@@ -25,9 +25,9 @@ const THIRD_PERSON_OFFSET: Vec3 = Vec3::new(0.0, 2.5, 5.0);
 #[derive(Resource, Default, PartialEq, Eq, Debug)]
 pub enum CameraMode {
     /// Camera follows the avatar (1st or 3rd person).
-    #[default]
     Attached,
     /// Camera detached, moves independently (spectator).
+    #[default]
     FreeFly,
 }
 
@@ -157,8 +157,7 @@ pub fn avatar_look(
 
     // Pitch — camera-only, clamped ±89°
     let max_pitch = 89.0_f32.to_radians();
-    config.pitch =
-        (config.pitch - delta.y * config.look_sensitivity).clamp(-max_pitch, max_pitch);
+    config.pitch = (config.pitch - delta.y * config.look_sensitivity).clamp(-max_pitch, max_pitch);
 }
 
 /// Scroll wheel adjusts avatar movement speed.
@@ -224,10 +223,7 @@ pub fn camera_follow_avatar(
 // ---------------------------------------------------------------------------
 
 /// V key toggles between 1st and 3rd person (only when attached).
-pub fn handle_pov_toggle(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut pov_state: ResMut<PovState>,
-) {
+pub fn handle_pov_toggle(keys: Res<ButtonInput<KeyCode>>, mut pov_state: ResMut<PovState>) {
     if keys.just_pressed(KeyCode::KeyV) {
         pov_state.pov = match pov_state.pov {
             PointOfView::FirstPerson => PointOfView::ThirdPerson,
@@ -242,6 +238,7 @@ pub fn handle_camera_mode_toggle(
     keys: Res<ButtonInput<KeyCode>>,
     mut mode: ResMut<CameraMode>,
     mut vis_q: Query<&mut Visibility, With<AvatarEntity>>,
+    avatar_config: Res<super::plugin::AvatarConfig>,
 ) {
     if keys.just_pressed(KeyCode::Tab) {
         *mode = match *mode {
@@ -254,6 +251,11 @@ pub fn handle_camera_mode_toggle(
                 CameraMode::FreeFly
             }
             CameraMode::FreeFly => {
+                // Only allow attaching if avatar config is active
+                if avatar_config.active.is_none() {
+                    info!("Camera mode: No avatar configured, staying in FreeFly");
+                    return;
+                }
                 // Re-attaching — camera_follow_avatar will position it next frame
                 info!("Camera mode: Attached");
                 CameraMode::Attached

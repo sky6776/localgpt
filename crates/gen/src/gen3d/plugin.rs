@@ -203,10 +203,7 @@ pub fn setup_gen_app(
             Update,
             avatar::avatar_movement.run_if(avatar::in_attached_mode),
         )
-        .add_systems(
-            Update,
-            avatar::avatar_look.run_if(avatar::in_attached_mode),
-        )
+        .add_systems(Update, avatar::avatar_look.run_if(avatar::in_attached_mode))
         .add_systems(
             Update,
             avatar::avatar_scroll_speed.run_if(avatar::in_attached_mode),
@@ -218,18 +215,9 @@ pub fn setup_gen_app(
                 .after(avatar::avatar_movement),
         )
         // FreeFly systems (run when camera is detached)
-        .add_systems(
-            Update,
-            fly_cam_movement.run_if(avatar::in_freefly_mode),
-        )
-        .add_systems(
-            Update,
-            fly_cam_look.run_if(avatar::in_freefly_mode),
-        )
-        .add_systems(
-            Update,
-            fly_cam_scroll_speed.run_if(avatar::in_freefly_mode),
-        )
+        .add_systems(Update, fly_cam_movement.run_if(avatar::in_freefly_mode))
+        .add_systems(Update, fly_cam_look.run_if(avatar::in_freefly_mode))
+        .add_systems(Update, fly_cam_scroll_speed.run_if(avatar::in_freefly_mode))
         // Toggle systems
         .add_systems(
             Update,
@@ -306,6 +294,7 @@ fn setup_default_scene(
 
     // Avatar — semi-transparent teal capsule at origin.
     // NOT registered in NameRegistry (invisible to LLM tools, survives scene clears).
+    // Hidden by default; shown when a world with avatar config is loaded.
     commands.spawn((
         Mesh3d(meshes.add(Capsule3d::new(0.3, 1.2))),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -314,6 +303,7 @@ fn setup_default_scene(
             ..default()
         })),
         Transform::from_translation(Vec3::ZERO),
+        Visibility::Hidden,
         AvatarEntity,
     ));
 }
@@ -381,7 +371,7 @@ struct GenCommandParams<'w, 's> {
     avatar_config: ResMut<'w, AvatarConfig>,
     world_tours: ResMut<'w, WorldTours>,
     current_world: ResMut<'w, CurrentWorld>,
-    camera_mode: Res<'w, avatar::CameraMode>,
+    camera_mode: ResMut<'w, avatar::CameraMode>,
     avatar_movement_config: ResMut<'w, avatar::AvatarMovementConfig>,
     avatar_entities: Query<'w, 's, Entity, With<AvatarEntity>>,
 }
@@ -1288,6 +1278,19 @@ fn process_gen_commands(
                         params.avatar_config.active = world_load.avatar;
                         params.world_tours.tours = world_load.tours;
 
+                        // Show/hide avatar and set camera mode based on avatar config.
+                        if params.avatar_config.active.is_some() {
+                            *params.camera_mode = avatar::CameraMode::Attached;
+                            for entity in params.avatar_entities.iter() {
+                                commands.entity(entity).insert(Visibility::Inherited);
+                            }
+                        } else {
+                            *params.camera_mode = avatar::CameraMode::FreeFly;
+                            for entity in params.avatar_entities.iter() {
+                                commands.entity(entity).insert(Visibility::Hidden);
+                            }
+                        }
+
                         // Restore edit history from saved world, or clear if not saved
                         if let Some(history) = world_load.edit_history {
                             params.undo_stack.history = history;
@@ -1368,6 +1371,13 @@ fn process_gen_commands(
                 // so they are always reset — a new world will provide its own.
                 params.avatar_config.active = None;
                 params.world_tours.tours.clear();
+
+                // Return to free-fly and hide avatar capsule.
+                *params.camera_mode = avatar::CameraMode::FreeFly;
+                for entity in params.avatar_entities.iter() {
+                    commands.entity(entity).insert(Visibility::Hidden);
+                }
+
                 resp
             }
 
