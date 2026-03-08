@@ -14,6 +14,7 @@ use localgpt_world_types as wt;
 
 use super::GenChannels;
 use super::audio::{self, SpatialAudioListener};
+use super::avatar::{self, AvatarEntity};
 use super::behaviors::{self, BehaviorState, EntityBehaviors};
 use super::commands::*;
 use super::compat;
@@ -121,7 +122,7 @@ pub struct CurrentWorld {
 
 /// Marker component for the interactive fly camera.
 #[derive(Component)]
-struct FlyCam;
+pub(crate) struct FlyCam;
 
 /// Configuration for the fly camera controller.
 #[derive(Resource)]
@@ -179,6 +180,9 @@ pub fn setup_gen_app(
         .init_resource::<CurrentWorld>()
         .init_resource::<FlyCamConfig>()
         .init_resource::<BehaviorState>()
+        .init_resource::<avatar::CameraMode>()
+        .init_resource::<avatar::PovState>()
+        .init_resource::<avatar::AvatarMovementConfig>()
         .add_systems(
             Startup,
             (
@@ -194,9 +198,44 @@ pub fn setup_gen_app(
         .add_systems(Update, audio::spatial_audio_update)
         .add_systems(Update, audio::auto_infer_audio)
         .add_systems(Update, behaviors::behavior_tick)
-        .add_systems(Update, fly_cam_movement)
-        .add_systems(Update, fly_cam_look)
-        .add_systems(Update, fly_cam_scroll_speed);
+        // Avatar systems (run when camera is attached to avatar)
+        .add_systems(
+            Update,
+            avatar::avatar_movement.run_if(avatar::in_attached_mode),
+        )
+        .add_systems(
+            Update,
+            avatar::avatar_look.run_if(avatar::in_attached_mode),
+        )
+        .add_systems(
+            Update,
+            avatar::avatar_scroll_speed.run_if(avatar::in_attached_mode),
+        )
+        .add_systems(
+            Update,
+            avatar::camera_follow_avatar
+                .run_if(avatar::in_attached_mode)
+                .after(avatar::avatar_movement),
+        )
+        // FreeFly systems (run when camera is detached)
+        .add_systems(
+            Update,
+            fly_cam_movement.run_if(avatar::in_freefly_mode),
+        )
+        .add_systems(
+            Update,
+            fly_cam_look.run_if(avatar::in_freefly_mode),
+        )
+        .add_systems(
+            Update,
+            fly_cam_scroll_speed.run_if(avatar::in_freefly_mode),
+        )
+        // Toggle systems
+        .add_systems(
+            Update,
+            avatar::handle_pov_toggle.run_if(avatar::in_attached_mode),
+        )
+        .add_systems(Update, avatar::handle_camera_mode_toggle);
 }
 
 /// Default scene: ground plane, camera, directional light, ambient light.
@@ -264,6 +303,19 @@ fn setup_default_scene(
         ))
         .id();
     registry.insert_with_id("main_light".into(), light, light_id);
+
+    // Avatar — semi-transparent teal capsule at origin.
+    // NOT registered in NameRegistry (invisible to LLM tools, survives scene clears).
+    commands.spawn((
+        Mesh3d(meshes.add(Capsule3d::new(0.3, 1.2))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(0.0, 0.7, 0.7, 0.6),
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        })),
+        Transform::from_translation(Vec3::ZERO),
+        AvatarEntity,
+    ));
 }
 
 /// Load the initial scene file if provided.
@@ -329,6 +381,9 @@ struct GenCommandParams<'w, 's> {
     avatar_config: ResMut<'w, AvatarConfig>,
     world_tours: ResMut<'w, WorldTours>,
     current_world: ResMut<'w, CurrentWorld>,
+    camera_mode: Res<'w, avatar::CameraMode>,
+    avatar_movement_config: ResMut<'w, avatar::AvatarMovementConfig>,
+    avatar_entities: Query<'w, 's, Entity, With<AvatarEntity>>,
 }
 
 /// Build a `SnapshotQueries` from `GenCommandParams`. Used in many dispatch arms.
@@ -677,7 +732,14 @@ fn process_gen_commands(
                     look_at: cmd.look_at,
                     fov_degrees: cmd.fov_degrees,
                 };
-                let resp = handle_set_camera(cmd, &mut commands, &params.registry);
+                let resp = handle_set_camera(
+                    cmd,
+                    &mut commands,
+                    &params.registry,
+                    &params.camera_mode,
+                    &mut params.avatar_movement_config,
+                    &params.avatar_entities,
+                );
                 if let GenResponse::CameraSet = &resp
                     && let Some(old_cam) = old_camera
                 {
@@ -1212,7 +1274,14 @@ fn process_gen_commands(
                             handle_set_environment(env, &mut commands);
                         }
                         if let Some(cam) = world_load.camera {
-                            handle_set_camera(cam, &mut commands, &params.registry);
+                            handle_set_camera(
+                                cam,
+                                &mut commands,
+                                &params.registry,
+                                &params.camera_mode,
+                                &mut params.avatar_movement_config,
+                                &params.avatar_entities,
+                            );
                         }
 
                         // Store avatar and tour configuration as resources.
@@ -2097,6 +2166,9 @@ fn handle_set_camera(
     cmd: CameraCmd,
     commands: &mut Commands,
     registry: &NameRegistry,
+    camera_mode: &avatar::CameraMode,
+    avatar_config: &mut avatar::AvatarMovementConfig,
+    avatar_query: &Query<Entity, With<AvatarEntity>>,
 ) -> GenResponse {
     let Some(camera_entity) = registry.get_entity("main_camera") else {
         return GenResponse::Error {
@@ -2104,17 +2176,32 @@ fn handle_set_camera(
         };
     };
 
-    let transform = Transform::from_translation(Vec3::from_array(cmd.position))
-        .looking_at(Vec3::from_array(cmd.look_at), Vec3::Y);
-
-    commands.entity(camera_entity).insert(transform);
-
     // Update projection FOV
     let projection = Projection::Perspective(PerspectiveProjection {
         fov: cmd.fov_degrees.to_radians(),
         ..default()
     });
     commands.entity(camera_entity).insert(projection);
+
+    if *camera_mode == avatar::CameraMode::Attached {
+        // Teleport avatar to the requested position; camera follows via camera_follow_avatar
+        if let Ok(avatar_ent) = avatar_query.single() {
+            let pos = Vec3::from_array(cmd.position);
+            let look_at = Vec3::from_array(cmd.look_at);
+            let dir = (look_at - pos).normalize_or_zero();
+            let yaw = (-dir.x).atan2(-dir.z);
+            avatar_config.yaw = yaw;
+            avatar_config.pitch = 0.0;
+            commands
+                .entity(avatar_ent)
+                .insert(Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)));
+        }
+    } else {
+        // FreeFly: set camera transform directly
+        let transform = Transform::from_translation(Vec3::from_array(cmd.position))
+            .looking_at(Vec3::from_array(cmd.look_at), Vec3::Y);
+        commands.entity(camera_entity).insert(transform);
+    }
 
     GenResponse::CameraSet
 }
