@@ -59,6 +59,7 @@ impl CurrentWorldSkill {
 
 /// Marker resource indicating the world has unsaved changes.
 #[derive(Resource, Default)]
+#[allow(dead_code)]
 pub struct WorldDirty {
     pub dirty: bool,
     /// Cooldown frames before auto-save triggers
@@ -83,6 +84,7 @@ pub struct PendingScreenshots {
     queue: Vec<PendingScreenshot>,
 }
 
+#[allow(dead_code)]
 struct PendingScreenshot {
     frames_remaining: u32,
     width: u32,
@@ -1508,7 +1510,7 @@ fn process_gen_commands(
 
 /// Process pending screenshots that need frame delays.
 fn process_pending_screenshots(
-    mut channel_res: ResMut<GenChannelRes>,
+    channel_res: ResMut<GenChannelRes>,
     mut pending: ResMut<PendingScreenshots>,
     current_skill: Res<CurrentWorldSkill>,
     mut commands: Commands,
@@ -1573,7 +1575,7 @@ fn process_pending_screenshots(
         let camera_entity = cameras.iter().next();
 
         // Take screenshot using Bevy's Screenshot API
-        if let Some(camera) = camera_entity {
+        if let Some(_camera) = camera_entity {
             // Create screenshot entity and observer for each path
             for path in &paths {
                 // Ensure parent directory exists
