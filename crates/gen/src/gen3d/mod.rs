@@ -12,6 +12,7 @@ pub mod behaviors;
 pub mod commands;
 pub mod compat;
 pub mod gltf_export;
+pub mod html_export;
 pub mod plugin;
 pub mod registry;
 pub mod tools;

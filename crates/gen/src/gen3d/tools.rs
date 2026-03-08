@@ -48,6 +48,7 @@ pub fn create_gen_tools(bridge: Arc<GenBridge>) -> Vec<Box<dyn Tool>> {
         Box::new(GenSaveWorldTool::new(bridge.clone())),
         Box::new(GenLoadWorldTool::new(bridge.clone())),
         Box::new(GenExportWorldTool::new(bridge.clone())),
+        Box::new(GenExportHtmlTool::new(bridge.clone())),
         // Scene management
         Box::new(GenClearSceneTool::new(bridge.clone())),
         // Undo/Redo
@@ -2298,6 +2299,56 @@ impl Tool for GenExportWorldTool {
         match self.bridge.send(GenCommand::ExportWorld { format }).await? {
             GenResponse::Exported { path } => Ok(format!(
                 "World exported to: {}\n\nThis file can be opened in external 3D viewers like Blender, Unity, Unreal Engine.",
+                path
+            )),
+            GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+// ===========================================================================
+// gen_export_html
+// ===========================================================================
+
+struct GenExportHtmlTool {
+    bridge: Arc<GenBridge>,
+}
+
+impl GenExportHtmlTool {
+    fn new(bridge: Arc<GenBridge>) -> Self {
+        Self { bridge }
+    }
+}
+
+#[async_trait]
+impl Tool for GenExportHtmlTool {
+    fn name(&self) -> &str {
+        "gen_export_html"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "gen_export_html".into(),
+            description: "Export the current world as a self-contained HTML file using Three.js. \
+                Generates index.html in the world's export/ directory with 3D shapes, PBR materials, \
+                lights, animated behaviors, and procedural audio via Web Audio API. \
+                Requires a saved world (use gen_save_world first). \
+                Open the exported file in any browser — no server required."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }
+    }
+
+    async fn execute(&self, _arguments: &str) -> Result<String> {
+        match self.bridge.send(GenCommand::ExportHtml).await? {
+            GenResponse::Exported { path } => Ok(format!(
+                "World exported to HTML: {}\n\n\
+                Open this file in any web browser to view the interactive 3D scene.\n\
+                Features: Three.js rendering, OrbitControls, animated behaviors, procedural audio.",
                 path
             )),
             GenResponse::Error { message } => Err(anyhow::anyhow!("{}", message)),

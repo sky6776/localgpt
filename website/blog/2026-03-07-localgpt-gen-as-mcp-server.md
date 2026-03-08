@@ -1,6 +1,6 @@
 ---
 slug: localgpt-gen-as-mcp-server
-title: "LocalGPT-Gen as an MCP Server"
+title: "LocalGPT Gen as an MCP Server"
 authors: [yi]
 tags: [localgpt, gen, mcp, 3d, architecture]
 draft: true

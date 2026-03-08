@@ -10,7 +10,7 @@ use localgpt_core::agent::tools::extract_tool_detail;
 use localgpt_core::agent::{Agent, list_sessions_for_agent, search_sessions_for_agent};
 use localgpt_core::commands::Interface;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod avatar_tools;
 mod gen3d;
@@ -27,7 +27,12 @@ enum CommandResult {
 }
 
 /// Handle slash commands for Gen mode.
-async fn handle_gen_command(input: &str, agent: &mut Agent, agent_id: &str) -> CommandResult {
+async fn handle_gen_command(
+    input: &str,
+    agent: &mut Agent,
+    agent_id: &str,
+    workspace: &Path,
+) -> CommandResult {
     let parts: Vec<&str> = input.split_whitespace().collect();
     let cmd = parts.first().copied().unwrap_or("");
 
@@ -311,8 +316,50 @@ async fn handle_gen_command(input: &str, agent: &mut Agent, agent_id: &str) -> C
         }
 
         "/skills" => {
-            // Gen mode doesn't have skills loaded like CLI does
-            println!("\nSkills are not available in Gen mode.\n");
+            match localgpt_core::agent::load_skills(workspace) {
+                Ok(skills) => {
+                    // Partition into world skills and other skills
+                    let mut worlds = Vec::new();
+                    let mut others = Vec::new();
+                    for skill in skills {
+                        let skill_dir = skill.path.parent().unwrap_or(&skill.path);
+                        if skill_dir.join("world.ron").exists()
+                            || skill_dir.join("world.toml").exists()
+                        {
+                            worlds.push(skill);
+                        } else {
+                            others.push(skill);
+                        }
+                    }
+
+                    if !worlds.is_empty() {
+                        println!("\nWorlds ({}):", worlds.len());
+                        for skill in &worlds {
+                            let source = match skill.source {
+                                localgpt_core::agent::skills::SkillSource::Workspace => {
+                                    "[workspace]"
+                                }
+                                localgpt_core::agent::skills::SkillSource::Managed => "[managed]",
+                                localgpt_core::agent::skills::SkillSource::Bundled => "[bundled]",
+                            };
+                            println!(
+                                "  /{} - {} {}",
+                                skill.command_name, skill.description, source
+                            );
+                        }
+                    }
+
+                    if !others.is_empty() {
+                        println!("\n{}", localgpt_core::agent::get_skills_summary(&others));
+                    }
+
+                    if worlds.is_empty() && others.is_empty() {
+                        println!("\nNo skills found.");
+                    }
+                    println!();
+                }
+                Err(e) => eprintln!("\nError loading skills: {}\n", e),
+            }
             CommandResult::Continue
         }
 
@@ -724,6 +771,7 @@ async fn run_agent_loop(
     // abort mid-scene.  Raise it so legitimate scene-building isn't blocked.
     let mut config = config;
     config.agent.max_tool_repeats = config.agent.max_tool_repeats.max(20);
+    let workspace = config.workspace_path();
 
     // Create agent with combined tools
     let mut agent = Agent::new_with_tools(config.clone(), agent_id, memory, tools)?;
@@ -791,7 +839,7 @@ async fn run_agent_loop(
 
         // Handle slash commands
         if input.starts_with('/') {
-            match handle_gen_command(input, &mut agent, agent_id).await {
+            match handle_gen_command(input, &mut agent, agent_id, &workspace).await {
                 CommandResult::Continue => continue,
                 CommandResult::Quit => break,
                 CommandResult::SendMessage(msg) => {

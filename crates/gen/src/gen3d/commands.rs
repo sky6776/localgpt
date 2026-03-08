@@ -93,6 +93,7 @@ pub enum GenCommand {
         /// Export format: "glb" (binary) or "gltf" (JSON + BIN)
         format: Option<String>,
     },
+    ExportHtml,
 
     // Tier 8: Scene management
     ClearScene {

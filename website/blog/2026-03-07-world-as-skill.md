@@ -1,6 +1,6 @@
 ---
 slug: world-as-skill
-title: "World as Skill: Giving Agents a Place to Live"
+title: "World as Skill"
 authors: [yi]
 tags: [localgpt, gen, 3d, architecture, skills]
 ---
@@ -9,33 +9,25 @@ tags: [localgpt, gen, 3d, architecture, skills]
 
 <!--truncate-->
 
-## The Problem: Worlds Are Ephemeral
-
 When an agent builds a 3D scene, the work is often lost when the session ends. There's no easy way to:
 *   Save a world and continue building later
 *   Share a creation with another agent or user
 *   Build a library of reusable environments
 
-## The Solution: World Skills
-
-With World Skills, `localgpt-gen` can save complete worlds as skill directories containing:
+World Skills lets `localgpt-gen` save complete worlds as skill directories containing:
 
 *   **Scene geometry** — All entities, meshes, and transforms
 *   **Behaviors** — Animations like orbit, spin, bob, path following
 *   **Audio configuration** — Ambient soundscapes and spatial emitters
-*   **Camera tours** — Guided sequences through the world
-*   **Avatar settings** — User presence and movement configuration
 
-The skill format is simple and human-readable:
+The skill format preserves parametric shapes:
 
 ```
 skills/my-world/
 ├── SKILL.md          # Description and usage
-├── world.toml        # Manifest (environment, avatar, camera)
-├── scene.glb         # glTF export of the scene
-├── behaviors.toml    # Entity animations
-├── audio.toml        # Sound configuration
-└── tours.toml        # Guided camera tours
+├── world.ron         # World manifest with inline entities
+└── export/
+    └── scene.glb     # glTF export (generated on demand)
 ```
 
 ## Decoupling Brain and Body
@@ -58,11 +50,15 @@ By decoupling these, we enable powerful combinations:
 **LocalGPT is an agent framework.** It defines how an AI thinks, remembers, and uses tools.
 **LocalGPT-Gen is a world engine.** It defines a reality for that AI to inhabit.
 
-In the spirit of the Unix philosophy, we are building small, sharp tools that communicate over standard protocols. World Skills make those tools persistent and shareable.
-
 ## Try It Out
 
-1.  Build a world: `cargo run -p localgpt-gen`
-2.  Save it as a skill: ask the agent to "save this world as a skill named my-castle"
-3.  Load it later: "load the my-castle world skill"
-4.  Export: the `scene.glb` file works in Blender, Unity, or any glTF viewer
+1.  Install: `cargo install localgpt-gen`
+2.  Build a world: `localgpt-gen` or `cargo run -p localgpt-gen` if run from source
+3.  Save it as a skill: ask the agent to "save this world as a skill named my-castle"
+4.  Load it later: "load the my-castle world skill"
+5.  Export for external viewers: "export this world as glb"
+
+## Future Improvements
+
+*   **Camera tours** — Guided sequences through the world
+*   **Avatar settings** — User presence and movement configuration

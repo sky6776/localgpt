@@ -1167,6 +1167,7 @@ fn process_gen_commands(
                 &params.mesh_handles,
                 &params.meshes,
             ),
+            GenCommand::ExportHtml => handle_export_html(&params.workspace, &params.current_world),
             GenCommand::LoadWorld { path, clear } => {
                 // Clear existing scene before loading if requested.
                 if clear {
@@ -3659,6 +3660,89 @@ fn handle_export_world(
                 Err(e) => GenResponse::Error { message: e },
             }
         }
+    }
+}
+
+/// Export the current world as a self-contained HTML file using Three.js.
+///
+/// Reads the saved `world.ron` manifest and generates HTML with embedded
+/// Three.js scene, procedural Web Audio, and animated behaviors.
+fn handle_export_html(workspace: &GenWorkspace, current_world: &CurrentWorld) -> GenResponse {
+    // Find the world directory — prefer current world, fallback to most recent
+    let world_dir = current_world.path.clone().or_else(|| {
+        let skills_dir = workspace.path.join("skills");
+        let mut worlds: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir()
+                    && path.join("world.ron").exists()
+                    && let Ok(modified) = entry.metadata().and_then(|m| m.modified())
+                {
+                    worlds.push((modified, path));
+                }
+            }
+        }
+        worlds
+            .iter()
+            .max_by_key(|(t, _)| *t)
+            .map(|(_, p)| p.clone())
+    });
+
+    let Some(world_dir) = world_dir else {
+        return GenResponse::Error {
+            message: "No saved worlds found. Save a world first with gen_save_world.".to_string(),
+        };
+    };
+
+    // Read the world.ron manifest
+    let ron_path = world_dir.join("world.ron");
+    if !ron_path.exists() {
+        return GenResponse::Error {
+            message: format!(
+                "No world.ron found in {}. Save a world first with gen_save_world.",
+                world_dir.display()
+            ),
+        };
+    }
+
+    let ron_content = match std::fs::read_to_string(&ron_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return GenResponse::Error {
+                message: format!("Failed to read world.ron: {}", e),
+            };
+        }
+    };
+
+    let manifest: localgpt_world_types::WorldManifest = match ron::from_str(&ron_content) {
+        Ok(m) => m,
+        Err(e) => {
+            return GenResponse::Error {
+                message: format!("Failed to parse world.ron: {}", e),
+            };
+        }
+    };
+
+    // Generate HTML
+    let html = super::html_export::generate_html(&manifest);
+
+    // Write to export directory
+    let export_dir = world_dir.join("export");
+    if let Err(e) = std::fs::create_dir_all(&export_dir) {
+        return GenResponse::Error {
+            message: format!("Failed to create export directory: {}", e),
+        };
+    }
+
+    let output_path = export_dir.join("index.html");
+    match std::fs::write(&output_path, &html) {
+        Ok(()) => GenResponse::Exported {
+            path: output_path.to_string_lossy().into_owned(),
+        },
+        Err(e) => GenResponse::Error {
+            message: format!("Failed to write HTML: {}", e),
+        },
     }
 }
 
